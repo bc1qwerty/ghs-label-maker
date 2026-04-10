@@ -385,7 +385,7 @@ export default function Home() {
               ))}
             </div>
 
-            <Card className="border-2 shadow-sm">
+            <Card className="border shadow-sm">
               <CardHeader>
                 <CardTitle className="text-lg">
                   File Upload
@@ -403,7 +403,7 @@ export default function Home() {
               <CardContent className="space-y-6">
                 {/* Drop Zone */}
                 <div
-                  className={`border-2 border-dashed rounded-lg p-10 text-center transition-colors cursor-pointer ${
+                  className={`border-2 border-dashed rounded-lg py-8 px-6 text-center transition-colors cursor-pointer ${
                     files.length > 0
                       ? "border-primary bg-primary/5"
                       : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50"
@@ -551,6 +551,20 @@ export default function Home() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Inline account strip for lg (right panel hidden) */}
+            {userPubkey && userInfo && (
+              <div className="hidden lg:flex xl:hidden items-center justify-between rounded-lg border bg-card p-3 text-xs">
+                <div className="flex items-center gap-4">
+                  <span className="text-emerald-600 font-semibold">⚡ {userPubkey.slice(0, 8)}...</span>
+                  <span><strong>{userInfo.credits || userInfo.freeRemaining}</strong> {userInfo.credits > 0 ? "credits" : "free left"}</span>
+                  <span><strong>{userInfo.totalUsed}</strong> used</span>
+                </div>
+                <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setNeedsPayment(true)}>
+                  Buy Credits
+                </Button>
+              </div>
+            )}
 
               </div>{/* end center column */}
 
