@@ -1,0 +1,10 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Red triangle -->
+  <polygon points="16,2 30,28 2,28" fill="#cc0000" stroke="#8b0000" stroke-width="1.2" stroke-linejoin="round"/>
+  <!-- White inner triangle for contrast -->
+  <polygon points="16,5.5 27.5,26.5 4.5,26.5" fill="#e60000"/>
+  <!-- Exclamation mark body -->
+  <rect x="14.5" y="11" width="3" height="9" rx="1.5" fill="white"/>
+  <!-- Exclamation mark dot -->
+  <circle cx="16" cy="23.5" r="1.8" fill="white"/>
+</svg>

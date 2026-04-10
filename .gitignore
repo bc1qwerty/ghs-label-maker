@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+server/ghs.db
+server/ghs.db-shm
+server/ghs.db-wal
+.omc/

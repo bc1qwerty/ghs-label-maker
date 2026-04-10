@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <title>GHS Label Generator — AI-Powered MSDS to GHS Label Converter</title>
+    <meta name="description" content="Generate GHS-compliant hazard labels from MSDS/SDS PDFs instantly using AI. Supports 10 languages, batch processing up to 30 files, and PDF download. Free trial available." />
+    <meta name="keywords" content="GHS label generator, MSDS converter, safety data sheet, hazard label, SDS to GHS, chemical safety, pictogram generator, GHS compliant label, MSDS PDF parser" />
+    <link rel="canonical" href="https://ghs.txid.uk/" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://ghs.txid.uk/" />
+    <meta property="og:title" content="GHS Label Generator — AI-Powered MSDS to GHS Label Converter" />
+    <meta property="og:description" content="Upload MSDS PDFs, get print-ready GHS hazard labels in seconds. Supports batch processing, 10 languages, and instant PDF download." />
+    <meta property="og:image" content="https://ghs.txid.uk/opengraph.jpg" />
+    <meta property="og:site_name" content="GHS Label Generator" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="GHS Label Generator — MSDS to GHS Labels in Seconds" />
+    <meta name="twitter:description" content="AI-powered GHS label generation from MSDS/SDS PDFs. 10 languages, batch mode, free trial." />
+    <meta name="twitter:image" content="https://ghs.txid.uk/opengraph.jpg" />
+
+    <!-- Structured Data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "GHS Label Generator",
+      "url": "https://ghs.txid.uk",
+      "description": "AI-powered tool to generate GHS-compliant hazard labels from MSDS/SDS PDF documents. Supports 10 languages and batch processing.",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Web",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD",
+        "description": "3 free extractions, then pay-per-use via Bitcoin Lightning"
+      },
+      "featureList": [
+        "AI-powered MSDS text extraction",
+        "GHS-compliant label generation",
+        "Batch processing up to 30 files",
+        "10 language support",
+        "PDF download",
+        "Print-ready A4 labels"
+      ]
+    }
+    </script>
+
+    <!-- Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-9DY1KPJ2L9"></script>
+    <script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-9DY1KPJ2L9');</script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://api.txid.uk/txid-auth.css" crossorigin="anonymous" />
+    <style>
+      #ghs-topbar { display:flex; align-items:center; justify-content:space-between; padding:8px 16px; border-bottom:1px solid #e5e5e5; background:#fafafa; }
+      @media (prefers-color-scheme:dark) { #ghs-topbar { background:#0a0a0a; border-color:#262626; } }
+      .dark #ghs-topbar { background:#0a0a0a; border-color:#262626; }
+      @media (max-width:640px) { .hide-mobile { display:none; } }
+      @media print { #ghs-topbar { display:none; } }
+    </style>
+  </head>
+  <body>
+    <div id="ghs-topbar">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:18px">⚠️</span>
+        <span style="font-weight:700;font-size:16px;letter-spacing:-0.01em">GHS Label Generator</span>
+        <span style="font-size:11px;color:#888;font-family:monospace" class="hide-mobile">Safety Data Extraction System</span>
+      </div>
+      <div id="txid-auth-mount" style="position:relative;display:inline-flex"></div>
+    </div>
+    <div id="root"></div>
+    <script src="https://api.txid.uk/txid-auth.js" crossorigin="anonymous" defer></script>
+    <script defer src="https://umami.txid.uk/script.js" data-website-id="1723fb07-833a-4ade-8bbe-3d03aadb64ad"></script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
