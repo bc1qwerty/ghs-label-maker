@@ -36,8 +36,17 @@ db.exec(`
     status TEXT DEFAULT 'pending',
     created_at INTEGER DEFAULT (unixepoch())
   );
+  CREATE TABLE IF NOT EXISTS history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pubkey TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'ghs',
+    filename TEXT,
+    data TEXT,
+    created_at INTEGER DEFAULT (unixepoch())
+  );
   CREATE INDEX IF NOT EXISTS idx_usage_pubkey ON usage(pubkey);
   CREATE INDEX IF NOT EXISTS idx_usage_ip ON usage(ip);
+  CREATE INDEX IF NOT EXISTS idx_history_pubkey ON history(pubkey);
 `);
 
 const stmts = {
@@ -53,6 +62,11 @@ const stmts = {
   createPayment: db.prepare("INSERT INTO payments (pubkey, payment_hash, amount_sats, plan) VALUES (?, ?, ?, ?)"),
   getPayment: db.prepare("SELECT * FROM payments WHERE payment_hash = ?"),
   completePayment: db.prepare("UPDATE payments SET status = 'paid' WHERE payment_hash = ?"),
+  saveHistory: db.prepare("INSERT INTO history (pubkey, mode, filename, data) VALUES (?, ?, ?, ?)"),
+  getHistory: db.prepare("SELECT id, mode, filename, created_at FROM history WHERE pubkey = ? ORDER BY created_at DESC LIMIT 100"),
+  getHistoryItem: db.prepare("SELECT * FROM history WHERE id = ? AND pubkey = ?"),
+  deleteHistoryItem: db.prepare("DELETE FROM history WHERE id = ? AND pubkey = ?"),
+  deleteOldHistory: db.prepare("DELETE FROM history WHERE created_at < unixepoch() - 86400 * 30"),
 };
 
 // ─── Config ───
@@ -434,6 +448,98 @@ Rules:
   }
 }
 
+// ─── Transport extraction ───
+const TRANSPORT_CLASSES = ["1","2.1","2.2","2.3","3","4.1","4.2","4.3","5.1","5.2","6.1","6.2","7","8","9"];
+
+async function extractTransportFromBuffer(buffer, language, filename) {
+  let pdfText = "";
+  try {
+    const result = await pdfParse(buffer);
+    pdfText = result.text;
+    console.log(`[TRANSPORT] Parsed ${filename}: ${result.numpages} pages, ${pdfText.length} chars`);
+  } catch (err) {
+    console.error(`[TRANSPORT] Failed to parse ${filename}:`, err.message);
+    return { success: false, error: "Failed to parse PDF file." };
+  }
+
+  if (!pdfText || pdfText.trim().length < 50) {
+    return { success: false, error: "Could not extract text from PDF." };
+  }
+
+  const LANG_LABELS = {
+    en: "English", ko: "Korean", ja: "Japanese", zh: "Chinese", de: "German",
+    fr: "French", es: "Spanish", pt: "Portuguese", th: "Thai", vi: "Vietnamese",
+  };
+  const langLabel = LANG_LABELS[language] || "English";
+
+  const systemPrompt = `You are an expert in dangerous goods transport regulations (UN, ADR, IMDG, IATA).
+Extract transport information from MSDS/SDS Section 14 and return in ${langLabel}.
+
+Return a JSON object:
+{
+  "productName": "string",
+  "unNumber": "string — UN four-digit number (e.g. UN1230) or 'Not regulated'",
+  "properShippingName": "string — official UN proper shipping name in ${langLabel}",
+  "hazardClass": "string — primary class (e.g. 3, 6.1, 8)",
+  "subsidiaryRisks": ["string — additional classes if any"],
+  "packingGroup": "string — I, II, or III, or null",
+  "marinePollutant": "boolean",
+  "transportCategory": "string — ADR transport category if available, or null",
+  "specialProvisions": ["string — any special provision codes"],
+  "tunnelRestrictionCode": "string or null",
+  "emergencyAction": "string — emergency response code if available, or null",
+  "additionalInfo": "string — any other transport-relevant notes, or null",
+  "notRegulated": "boolean — true if the substance is not classified as dangerous goods for transport",
+  "language": "${language}"
+}
+
+Rules:
+- Focus on Section 14 (Transport Information) of the MSDS
+- If the substance is not regulated for transport, set notRegulated=true and unNumber="Not regulated"
+- Use standard ${langLabel} terminology
+- Return ONLY valid JSON, no markdown`;
+
+  try {
+    const message = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: `${systemPrompt}\n\nMSDS text:\n${pdfText.substring(0, 15000)}` }],
+    });
+
+    const rawContent = message.content[0]?.type === "text" ? message.content[0].text : "";
+    if (!rawContent) return { success: false, error: "AI returned empty response" };
+
+    const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { success: false, error: "Failed to parse AI response" };
+
+    let data;
+    try { data = JSON.parse(jsonMatch[0]); } catch { return { success: false, error: "Failed to parse AI response" }; }
+
+    return {
+      success: true,
+      data: {
+        productName: String(data.productName ?? ""),
+        unNumber: String(data.unNumber ?? "Not regulated"),
+        properShippingName: String(data.properShippingName ?? ""),
+        hazardClass: String(data.hazardClass ?? ""),
+        subsidiaryRisks: Array.isArray(data.subsidiaryRisks) ? data.subsidiaryRisks.map(String) : [],
+        packingGroup: data.packingGroup ? String(data.packingGroup) : null,
+        marinePollutant: Boolean(data.marinePollutant),
+        transportCategory: data.transportCategory ? String(data.transportCategory) : null,
+        specialProvisions: Array.isArray(data.specialProvisions) ? data.specialProvisions.map(String) : [],
+        tunnelRestrictionCode: data.tunnelRestrictionCode ? String(data.tunnelRestrictionCode) : null,
+        emergencyAction: data.emergencyAction ? String(data.emergencyAction) : null,
+        additionalInfo: data.additionalInfo ? String(data.additionalInfo) : null,
+        notRegulated: Boolean(data.notRegulated),
+        language: language,
+      },
+    };
+  } catch (err) {
+    console.error(`[TRANSPORT] API error for ${filename}:`, err.message);
+    return { success: false, error: "Failed to extract transport information." };
+  }
+}
+
 // ─── Upload config ───
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -482,8 +588,83 @@ app.post("/api/ghs/extract-batch", upload.array("files", 30), checkUsage, async 
 
   const successCount = results.filter(r => r.status === "success").length;
   recordUsage(req.authInfo.pubkey, getClientIp(req), successCount);
+  // Save to history
+  if (req.authInfo.pubkey) {
+    for (const r of results) {
+      if (r.status === "success" && r.data) {
+        try { stmts.saveHistory.run(req.authInfo.pubkey, "ghs", r.filename, JSON.stringify(r.data)); } catch {}
+      }
+    }
+  }
   console.log(`[GHS] Batch done: ${successCount}/${files.length}`);
   res.json(results);
+});
+
+// Transport extraction (single)
+app.post("/api/transport/extract", upload.single("file"), checkUsage, async (req, res) => {
+  const file = req.file;
+  const language = req.body.language;
+  if (!file) return res.status(400).json({ error: "No PDF uploaded" });
+  if (!language) return res.status(400).json({ error: "Language is required" });
+
+  const filename = decodeFilename(file.originalname);
+  const result = await extractTransportFromBuffer(file.buffer, language, filename);
+  if (!result.success) return res.status(400).json({ error: result.error });
+
+  recordUsage(req.authInfo.pubkey, getClientIp(req), 1);
+  res.json(result.data);
+});
+
+// Transport batch extraction
+app.post("/api/transport/extract-batch", upload.array("files", 30), checkUsage, async (req, res) => {
+  const files = req.files;
+  const language = req.body.language;
+  if (!files || files.length === 0) return res.status(400).json({ error: "No PDF files uploaded" });
+  if (!language) return res.status(400).json({ error: "Language is required" });
+
+  console.log(`[TRANSPORT] Batch: ${files.length} files, language=${language}`);
+
+  const results = await Promise.all(
+    files.map(async (file) => {
+      const filename = decodeFilename(file.originalname);
+      const result = await extractTransportFromBuffer(file.buffer, language, filename);
+      return result.success
+        ? { filename, status: "success", data: result.data, error: null }
+        : { filename, status: "error", data: undefined, error: result.error };
+    })
+  );
+
+  const successCount = results.filter(r => r.status === "success").length;
+  recordUsage(req.authInfo.pubkey, getClientIp(req), successCount);
+  if (req.authInfo.pubkey) {
+    for (const r of results) {
+      if (r.status === "success" && r.data) {
+        try { stmts.saveHistory.run(req.authInfo.pubkey, "transport", r.filename, JSON.stringify(r.data)); } catch {}
+      }
+    }
+  }
+  console.log(`[TRANSPORT] Batch done: ${successCount}/${files.length}`);
+  res.json(results);
+});
+
+// ─── History ───
+app.get("/api/history/:pubkey", (req, res) => {
+  const { pubkey } = req.params;
+  // Cleanup old entries (30 days)
+  try { stmts.deleteOldHistory.run(); } catch {}
+  const items = stmts.getHistory.all(pubkey);
+  res.json(items);
+});
+
+app.get("/api/history/:pubkey/:id", (req, res) => {
+  const item = stmts.getHistoryItem.get(Number(req.params.id), req.params.pubkey);
+  if (!item) return res.status(404).json({ error: "Not found" });
+  res.json({ ...item, data: JSON.parse(item.data) });
+});
+
+app.delete("/api/history/:pubkey/:id", (req, res) => {
+  stmts.deleteHistoryItem.run(Number(req.params.id), req.params.pubkey);
+  res.json({ ok: true });
 });
 
 // Health

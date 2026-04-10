@@ -9,8 +9,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { GhsLabel } from "@/components/ghs-label";
+import { TransportLabel, type TransportData } from "@/components/transport-label";
 import { PaymentModal } from "@/components/payment-modal";
 import { GhsData } from "@/types";
+
+type Mode = "ghs" | "transport";
 
 type BatchResultItem = {
   filename: string;
@@ -33,6 +36,7 @@ declare global {
 }
 
 export default function Home() {
+  const [mode, setMode] = React.useState<Mode>("ghs");
   const [files, setFiles] = React.useState<File[]>([]);
   const [language, setLanguage] = React.useState<string>("en");
   const [processingStatus, setProcessingStatus] = React.useState<ProcessingStatus>("idle");
@@ -133,7 +137,8 @@ export default function Home() {
       const headers: Record<string, string> = {};
       if (userPubkey) headers["X-User-Pubkey"] = userPubkey;
 
-      const response = await fetch(`/api/ghs/extract-batch`, {
+      const endpoint = mode === "transport" ? "/api/transport/extract-batch" : "/api/ghs/extract-batch";
+      const response = await fetch(endpoint, {
         method: "POST",
         body: formData,
         headers,
@@ -376,6 +381,22 @@ export default function Home() {
               {/* Right: Upload area */}
               <div className="space-y-6">
 
+            {/* Mode Tabs */}
+            <div className="flex rounded-lg border bg-muted/30 p-1">
+              <button
+                onClick={() => { setMode("ghs"); setResults([]); setProcessingStatus("idle"); setApiError(null); }}
+                className={`flex-1 py-2 px-4 rounded-md text-sm font-semibold transition-colors ${mode === "ghs" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                GHS Label
+              </button>
+              <button
+                onClick={() => { setMode("transport"); setResults([]); setProcessingStatus("idle"); setApiError(null); }}
+                className={`flex-1 py-2 px-4 rounded-md text-sm font-semibold transition-colors ${mode === "transport" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                Transport Label
+              </button>
+            </div>
+
             <Card className="border-2 shadow-sm">
               <CardHeader>
                 <CardTitle className="text-lg">
@@ -504,7 +525,7 @@ export default function Home() {
                       {`Analyzing ${files.length} file(s)...`}
                     </>
                   ) : (
-                    `Generate GHS Labels (${files.length} file${files.length !== 1 ? "s" : ""})`
+                    `Generate ${mode === "transport" ? "Transport" : "GHS"} Labels (${files.length} file${files.length !== 1 ? "s" : ""})`
                   )}
                 </Button>
 
@@ -636,7 +657,10 @@ export default function Home() {
                       className="flex justify-center bg-muted/30 p-8 rounded-xl border print:p-0 print:border-none print:bg-transparent overflow-x-auto"
                       data-label-index={idx}
                     >
-                      <GhsLabel data={result.data!} />
+                      {mode === "transport"
+                        ? <TransportLabel data={result.data! as unknown as TransportData} />
+                        : <GhsLabel data={result.data!} />
+                      }
                     </div>
                   </div>
                 ))}

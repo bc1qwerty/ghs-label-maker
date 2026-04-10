@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <rect x="10" y="10" width="180" height="180" transform="rotate(45 100 100)" fill="#FFF" stroke="#000" stroke-width="4"/>
+  <g>
+    <line x1="30" y1="100" x2="170" y2="100" stroke="#FF0000" stroke-width="8"/>
+    <line x1="40" y1="85" x2="160" y2="85" stroke="#FF0000" stroke-width="6"/>
+    <line x1="50" y1="70" x2="150" y2="70" stroke="#FF0000" stroke-width="5"/>
+    <line x1="40" y1="115" x2="160" y2="115" stroke="#FF0000" stroke-width="6"/>
+    <line x1="50" y1="130" x2="150" y2="130" stroke="#FF0000" stroke-width="5"/>
+  </g>
+  <g transform="translate(100,85)">
+    <path d="M0,-20 C-4,-12 -10,-3 -10,3 C-10,10 -5,17 0,20 C5,17 10,10 10,3 C10,-3 4,-12 0,-20Z" fill="#000"/>
+  </g>
+  <text x="100" y="158" text-anchor="middle" font-family="Arial,sans-serif" font-size="28" font-weight="bold" fill="#000">4</text>
+</svg>

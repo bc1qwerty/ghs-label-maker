@@ -316,6 +316,8 @@ export function GhsLabel({ data }: GhsLabelProps) {
               textAlign: "right",
               borderLeft: "2px solid #ddd",
               paddingLeft: 20,
+              minWidth: 200,
+              flexShrink: 0,
               display: "flex",
               flexDirection: "column",
               justifyContent: "center",
@@ -335,10 +337,11 @@ export function GhsLabel({ data }: GhsLabelProps) {
             </div>
             <div
               style={{
-                fontSize: 20,
+                fontSize: 18,
                 fontWeight: 900,
                 color: "#cc0000",
-                letterSpacing: "0.04em",
+                letterSpacing: "0.02em",
+                whiteSpace: "nowrap",
               }}
             >
               {data.emergencyPhone}
