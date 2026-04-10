@@ -228,6 +228,9 @@ const paymentRateLimit = rateLimit(10);   // 10 req/min for payment endpoints
 // Apply rate limits to API routes
 app.use("/api/ghs", apiRateLimit);
 app.use("/api/transport", apiRateLimit);
+app.use("/api/dgd", apiRateLimit);
+app.use("/api/sds", apiRateLimit);
+app.use("/api/un383", apiRateLimit);
 app.use("/api/payment", paymentRateLimit);
 
 // ─── Lightning payments ───
@@ -714,6 +717,181 @@ app.delete("/api/history/:pubkey/:id", (req, res) => {
   stmts.deleteHistoryItem.run(Number(req.params.id), req.params.pubkey);
   res.json({ ok: true });
 });
+
+// ─── Generic AI extraction helper ───
+async function extractWithPrompt(buffer, language, filename, systemPrompt, logTag) {
+  let pdfText = "";
+  try {
+    const result = await pdfParse(buffer);
+    pdfText = result.text;
+    console.log(`[${logTag}] Parsed ${filename}: ${result.numpages} pages, ${pdfText.length} chars`);
+  } catch (err) {
+    console.error(`[${logTag}] Failed to parse ${filename}:`, err.message);
+    return { success: false, error: "Failed to parse PDF file." };
+  }
+  if (!pdfText || pdfText.trim().length < 50) {
+    return { success: false, error: "Could not extract text from PDF." };
+  }
+  try {
+    const message = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 4096,
+      messages: [{ role: "user", content: `${systemPrompt}\n\nDocument text:\n${pdfText.substring(0, 15000)}` }],
+    });
+    const rawContent = message.content[0]?.type === "text" ? message.content[0].text : "";
+    if (!rawContent) return { success: false, error: "AI returned empty response" };
+    const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { success: false, error: "Failed to parse AI response" };
+    let data;
+    try { data = JSON.parse(jsonMatch[0]); } catch { return { success: false, error: "Failed to parse AI response" }; }
+    return { success: true, data };
+  } catch (err) {
+    console.error(`[${logTag}] API error for ${filename}:`, err.message);
+    return { success: false, error: `Failed to extract ${logTag} information.` };
+  }
+}
+
+function batchRoute(path, promptFn, logTag, mode) {
+  app.post(path, upload.array("files", 30), checkUsage, async (req, res) => {
+    const files = req.files;
+    const language = req.body.language;
+    if (!files || files.length === 0) return res.status(400).json({ error: "No PDF files uploaded" });
+    if (!language) return res.status(400).json({ error: "Language is required" });
+    console.log(`[${logTag}] Batch: ${files.length} files, language=${language}`);
+    const results = await Promise.all(files.map(async (file) => {
+      const filename = decodeFilename(file.originalname);
+      const prompt = promptFn(language);
+      const result = await extractWithPrompt(file.buffer, language, filename, prompt, logTag);
+      return result.success
+        ? { filename, status: "success", data: result.data, error: null }
+        : { filename, status: "error", data: undefined, error: result.error };
+    }));
+    const successCount = results.filter(r => r.status === "success").length;
+    recordUsage(req.authInfo.pubkey, getClientIp(req), successCount);
+    if (req.authInfo.pubkey) {
+      for (const r of results) {
+        if (r.status === "success" && r.data) {
+          try { stmts.saveHistory.run(req.authInfo.pubkey, mode, r.filename, JSON.stringify(r.data)); } catch {}
+        }
+      }
+    }
+    console.log(`[${logTag}] Batch done: ${successCount}/${files.length}`);
+    res.json(results);
+  });
+}
+
+// ─── IATA DGD ───
+const dgdPrompt = (lang) => `You are an expert in IATA Dangerous Goods Regulations.
+Extract information needed for a Shipper's Declaration for Dangerous Goods from this MSDS/SDS.
+
+Return JSON:
+{
+  "productName": "string",
+  "unNumber": "string (e.g. UN1230)",
+  "properShippingName": "string — official IATA shipping name",
+  "hazardClass": "string",
+  "subsidiaryRisks": ["string"],
+  "packingGroup": "string or null",
+  "quantity": "string — net quantity per package if found, or null",
+  "packagingInstructions": "string — IATA packing instruction number if found, or null",
+  "authorization": "string — special permit or approval if needed, or null",
+  "additionalHandling": "string — additional handling info, or null",
+  "emergencyPhone": "string or null",
+  "marinePollutant": false,
+  "radioactive": false,
+  "declarationText": "I hereby declare that the contents of this consignment are fully and accurately described above by the proper shipping name, and are classified, packaged, marked and labelled/placarded, and are in all respects in proper condition for transport according to applicable international and national governmental regulations.",
+  "language": "${lang}"
+}
+
+Rules:
+- Extract UN number, proper shipping name, class, and packing group from Section 14
+- Use standard IATA terminology
+- If corrupted characters detected, correct them
+- Return ONLY valid JSON`;
+
+batchRoute("/api/dgd/extract-batch", dgdPrompt, "DGD", "dgd");
+
+// ─── SDS Convert (8→16 section) ───
+const sdsConvertPrompt = (lang) => {
+  const LANG_LABELS = { en:"English", ko:"Korean", ja:"Japanese", zh:"Chinese", de:"German", fr:"French", es:"Spanish", pt:"Portuguese", th:"Thai", vi:"Vietnamese" };
+  const langLabel = LANG_LABELS[lang] || "English";
+  return `You are an expert in GHS Safety Data Sheet authoring.
+Convert this MSDS/SDS into the standard GHS 16-section format in ${langLabel}.
+
+Return JSON with exactly these 16 sections:
+{
+  "productName": "string",
+  "sections": {
+    "1": { "title": "Identification", "content": "string" },
+    "2": { "title": "Hazard Identification", "content": "string" },
+    "3": { "title": "Composition/Information on Ingredients", "content": "string" },
+    "4": { "title": "First-Aid Measures", "content": "string" },
+    "5": { "title": "Fire-Fighting Measures", "content": "string" },
+    "6": { "title": "Accidental Release Measures", "content": "string" },
+    "7": { "title": "Handling and Storage", "content": "string" },
+    "8": { "title": "Exposure Controls/Personal Protection", "content": "string" },
+    "9": { "title": "Physical and Chemical Properties", "content": "string" },
+    "10": { "title": "Stability and Reactivity", "content": "string" },
+    "11": { "title": "Toxicological Information", "content": "string" },
+    "12": { "title": "Ecological Information", "content": "string" },
+    "13": { "title": "Disposal Considerations", "content": "string" },
+    "14": { "title": "Transport Information", "content": "string" },
+    "15": { "title": "Regulatory Information", "content": "string" },
+    "16": { "title": "Other Information", "content": "string" }
+  },
+  "language": "${lang}"
+}
+
+Rules:
+- Map existing content to the correct GHS section numbers
+- If a section has no data in the source, write "No data available"
+- Section titles must be in ${langLabel}
+- Content must be in ${langLabel}
+- Fix any corrupted/garbled characters
+- Return ONLY valid JSON`;
+};
+
+batchRoute("/api/sds/convert-batch", sdsConvertPrompt, "SDS", "sds-convert");
+
+// ─── UN38.3 Battery Summary ───
+const un383Prompt = (lang) => `You are an expert in lithium battery transport regulations.
+Extract information for a UN38.3 Transport Document Summary from this test report or MSDS.
+
+Return JSON:
+{
+  "productName": "string — battery or product name",
+  "manufacturer": "string",
+  "batteryType": "string — e.g. Lithium Ion, Lithium Metal, etc.",
+  "wattHourRating": "string — Wh rating per cell/battery, or null",
+  "lithiumContent": "string — grams of lithium per cell/battery, or null",
+  "unNumber": "string — UN3480, UN3481, UN3090, or UN3091",
+  "properShippingName": "string",
+  "hazardClass": "9",
+  "packingGroup": "null",
+  "testResults": [
+    "T.1 Altitude Simulation: Pass/Fail/Not tested",
+    "T.2 Thermal Test: Pass/Fail/Not tested",
+    "T.3 Vibration: Pass/Fail/Not tested",
+    "T.4 Shock: Pass/Fail/Not tested",
+    "T.5 External Short Circuit: Pass/Fail/Not tested",
+    "T.6 Impact/Crush: Pass/Fail/Not tested",
+    "T.7 Overcharge: Pass/Fail/Not tested",
+    "T.8 Forced Discharge: Pass/Fail/Not tested"
+  ],
+  "testLab": "string — testing laboratory name, or null",
+  "testDate": "string — date of testing, or null",
+  "additionalInfo": "string or null",
+  "language": "${lang}"
+}
+
+Rules:
+- If this is an MSDS rather than a test report, extract battery-relevant info from available sections
+- UN3480=Li-ion batteries alone, UN3481=Li-ion in/with equipment, UN3090=Li-metal alone, UN3091=Li-metal in/with equipment
+- If test results not found, mark as "Not tested"
+- Fix corrupted characters
+- Return ONLY valid JSON`;
+
+batchRoute("/api/un383/extract-batch", un383Prompt, "UN383", "un383");
 
 // Health
 app.get("/api/health", (_req, res) => res.json({ status: "ok", service: "ghs-label-maker" }));

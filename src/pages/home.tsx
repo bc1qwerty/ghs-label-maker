@@ -10,10 +10,11 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { GhsLabel } from "@/components/ghs-label";
 import { TransportLabel, type TransportData } from "@/components/transport-label";
+import { DocumentView } from "@/components/document-view";
 import { PaymentModal } from "@/components/payment-modal";
 import { GhsData } from "@/types";
 
-type Mode = "ghs" | "transport";
+type Mode = "ghs" | "transport" | "dgd" | "sds-convert" | "un383";
 
 type BatchResultItem = {
   filename: string;
@@ -164,7 +165,14 @@ export default function Home() {
       const headers: Record<string, string> = {};
       if (userPubkey) headers["X-User-Pubkey"] = userPubkey;
 
-      const endpoint = mode === "transport" ? "/api/transport/extract-batch" : "/api/ghs/extract-batch";
+      const endpointMap: Record<Mode, string> = {
+        ghs: "/api/ghs/extract-batch",
+        transport: "/api/transport/extract-batch",
+        dgd: "/api/dgd/extract-batch",
+        "sds-convert": "/api/sds/convert-batch",
+        un383: "/api/un383/extract-batch",
+      };
+      const endpoint = endpointMap[mode];
       const response = await fetch(endpoint, {
         method: "POST",
         body: formData,
@@ -273,13 +281,15 @@ export default function Home() {
         .filter((r) => r.status === "success" && r.data)
         .map((r) => r.filename.replace(/\.pdf$/i, ""));
 
-      const suffix = mode === "transport" ? "trslabel" : "ghslabel";
+      const suffixMap: Record<string, string> = { ghs: "ghslabel", transport: "trslabel", dgd: "dgd", "sds-convert": "sds", un383: "un383" };
+      const suffix = suffixMap[mode] || "label";
       let pdfFilename: string;
       if (successFilenames.length === 1) {
         pdfFilename = `${successFilenames[0]}_${suffix}.pdf`;
       } else {
         const dateStr = new Date().toISOString().slice(0, 10);
-        const prefix = mode === "transport" ? "Transport_Labels" : "GHS_Labels";
+        const prefixMap: Record<string, string> = { ghs: "GHS_Labels", transport: "Transport_Labels", dgd: "IATA_DGD", "sds-convert": "SDS_Converted", un383: "UN383_Summary" };
+        const prefix = prefixMap[mode] || "Labels";
         pdfFilename = `${prefix}_${successFilenames.length}files_${suffix}_${dateStr}.pdf`;
       }
       pdf.save(pdfFilename);
@@ -364,19 +374,22 @@ export default function Home() {
               <div className="space-y-6">
 
             {/* Mode Tabs */}
-            <div className="flex rounded-lg border bg-muted/30 p-1">
-              <button
-                onClick={() => { setMode("ghs"); setResults([]); setProcessingStatus("idle"); setApiError(null); }}
-                className={`flex-1 py-2 px-4 rounded-md text-sm font-semibold transition-colors ${mode === "ghs" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground"}`}
-              >
-                GHS Label
-              </button>
-              <button
-                onClick={() => { setMode("transport"); setResults([]); setProcessingStatus("idle"); setApiError(null); }}
-                className={`flex-1 py-2 px-4 rounded-md text-sm font-semibold transition-colors ${mode === "transport" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground"}`}
-              >
-                Transport Label
-              </button>
+            <div className="flex flex-wrap rounded-lg border bg-muted/30 p-1 gap-0.5">
+              {([
+                ["ghs", "GHS Label"],
+                ["transport", "Transport"],
+                ["dgd", "IATA DGD"],
+                ["sds-convert", "SDS Convert"],
+                ["un383", "UN38.3"],
+              ] as [Mode, string][]).map(([m, label]) => (
+                <button
+                  key={m}
+                  onClick={() => { setMode(m); setResults([]); setProcessingStatus("idle"); setApiError(null); }}
+                  className={`flex-1 py-2 px-3 rounded-md text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap ${mode === m ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
 
             <Card className="border-2 shadow-sm">
@@ -507,7 +520,7 @@ export default function Home() {
                       {`Analyzing ${files.length} file(s)...`}
                     </>
                   ) : (
-                    `Generate ${mode === "transport" ? "Transport" : "GHS"} Labels (${files.length} file${files.length !== 1 ? "s" : ""})`
+                    `Generate (${files.length} file${files.length !== 1 ? "s" : ""})`
                   )}
                 </Button>
 
@@ -720,10 +733,13 @@ export default function Home() {
                       className="flex justify-center bg-muted/30 p-8 rounded-xl border print:p-0 print:border-none print:bg-transparent overflow-x-auto"
                       data-label-index={idx}
                     >
-                      {mode === "transport"
-                        ? <TransportLabel data={result.data! as unknown as TransportData} />
-                        : <GhsLabel data={result.data!} />
-                      }
+                      {mode === "ghs" ? (
+                        <GhsLabel data={result.data!} />
+                      ) : mode === "transport" ? (
+                        <TransportLabel data={result.data! as unknown as TransportData} />
+                      ) : (
+                        <DocumentView title={result.filename} data={result.data! as unknown as Record<string, unknown>} mode={mode} />
+                      )}
                     </div>
                   </div>
                 ))}
