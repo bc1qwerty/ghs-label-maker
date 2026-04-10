@@ -341,9 +341,9 @@ export default function Home() {
               <aside className="space-y-5 mb-8 lg:mb-0 lg:sticky lg:top-8 lg:self-start print:hidden">
 
                 {/* Notice */}
-                <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-3 text-xs text-muted-foreground leading-relaxed">
-                  <p className="font-semibold text-yellow-600 dark:text-yellow-400 mb-1">Why paid?</p>
-                  <p>First 3 extractions free. After that, pay per use with Bitcoin Lightning.</p>
+                <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs text-muted-foreground leading-relaxed">
+                  <p className="font-semibold text-emerald-600 dark:text-emerald-400 mb-1">Free Trial</p>
+                  <p>Your first 3 extractions are free — no account needed. After that, pay per use with Bitcoin Lightning. No subscriptions, no hidden fees.</p>
                 </div>
 
                 {/* How it works */}
