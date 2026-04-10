@@ -51,6 +51,7 @@ export default function Home() {
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = React.useState(false);
   const [userPubkey, setUserPubkey] = React.useState<string | null>(null);
+  const [ghsToken, setGhsToken] = React.useState<string | null>(null);
   const [needsPayment, setNeedsPayment] = React.useState(false);
   const [userInfo, setUserInfo] = React.useState<{
     totalUsed: number; credits: number; plan: string;
@@ -64,32 +65,55 @@ export default function Home() {
   const labelContainerRef = React.useRef<HTMLDivElement>(null);
 
   // Listen for auth state changes from txid-auth.js
+  // Intercept fetch to capture session token when txid-auth.js posts it
   React.useEffect(() => {
+    const origFetch = window.fetch;
+    window.fetch = function(url, opts) {
+      if (typeof url === "string" && url.includes("/auth/session") && opts?.body) {
+        try {
+          const body = JSON.parse(opts.body as string);
+          if (body.token) {
+            localStorage.setItem("ghs-auth-token", body.token);
+            setGhsToken(body.token);
+          }
+        } catch {}
+      }
+      return origFetch.apply(this, arguments as any);
+    };
+
+    // Restore saved token
+    const savedToken = localStorage.getItem("ghs-auth-token");
+    if (savedToken) setGhsToken(savedToken);
+
     const check = () => {
       const user = window.txidAuth?.getUser?.();
       setUserPubkey(user?.pubkey || null);
     };
     check();
-    // Poll until txid-auth.js loads
     const interval = setInterval(check, 1000);
     const timeout = setTimeout(() => clearInterval(interval), 10000);
-    // Listen for auth changes
-    try { window.txidAuth?.onAuthChange?.((u) => setUserPubkey(u?.pubkey || null)); } catch {}
+    try {
+      window.txidAuth?.onAuthChange?.((u) => {
+        setUserPubkey(u?.pubkey || null);
+        if (!u) { localStorage.removeItem("ghs-auth-token"); setGhsToken(null); }
+      });
+    } catch {}
     return () => { clearInterval(interval); clearTimeout(timeout); };
   }, []);
 
   // Fetch user info when pubkey changes
   const fetchUserInfo = React.useCallback(async () => {
-    if (!userPubkey) { setUserInfo(null); setHistory([]); return; }
+    if (!userPubkey || !ghsToken) { setUserInfo(null); setHistory([]); return; }
+    const authHeaders = { "X-Auth-Token": ghsToken };
     try {
       const [userRes, histRes] = await Promise.all([
-        fetch(`/api/user/${userPubkey}`),
-        fetch(`/api/history/${userPubkey}`),
+        fetch(`/api/user/${userPubkey}`, { headers: authHeaders }),
+        fetch(`/api/history/${userPubkey}`, { headers: authHeaders }),
       ]);
       if (userRes.ok) setUserInfo(await userRes.json());
       if (histRes.ok) setHistory(await histRes.json());
     } catch {}
-  }, [userPubkey]);
+  }, [userPubkey, ghsToken]);
 
   React.useEffect(() => { fetchUserInfo(); }, [fetchUserInfo]);
 
@@ -163,7 +187,7 @@ export default function Home() {
 
     try {
       const headers: Record<string, string> = {};
-      if (userPubkey) headers["X-User-Pubkey"] = userPubkey;
+      if (ghsToken) headers["X-Auth-Token"] = ghsToken;
 
       const endpointMap: Record<Mode, string> = {
         ghs: "/api/ghs/extract-batch",

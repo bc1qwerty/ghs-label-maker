@@ -99,14 +99,61 @@ const pdfParse = _require("pdf-parse");
 // ─── Anthropic client ───
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// Concurrency limiter for AI calls
+const MAX_CONCURRENT_AI = 3;
+let activeAiCalls = 0;
+const aiQueue = [];
+function acquireAiSlot() {
+  return new Promise((resolve) => {
+    if (activeAiCalls < MAX_CONCURRENT_AI) { activeAiCalls++; resolve(); }
+    else aiQueue.push(resolve);
+  });
+}
+function releaseAiSlot() {
+  activeAiCalls--;
+  if (aiQueue.length > 0) { activeAiCalls++; aiQueue.shift()(); }
+}
+
 // ─── Middleware ───
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors({
+  origin: ["https://ghs.txid.uk", "http://localhost:5173", "http://localhost:3100"],
+  credentials: true,
+}));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "../dist")));
 
-// Extract user pubkey from header (set by frontend after txid-auth login)
-function getUserPubkey(req) {
-  return req.headers["x-user-pubkey"] || null;
+// ─── Auth: verify via shared api.txid.uk session DB ───
+const AUTH_DB_PATH = process.env.AUTH_DB_PATH || "/home/ubuntu/api.txid.uk/data/txid-auth.db";
+let authDb;
+try {
+  authDb = new Database(AUTH_DB_PATH, { readonly: true, fileMustExist: true });
+  console.log("[GHS] Connected to auth DB:", AUTH_DB_PATH);
+} catch (e) {
+  console.warn("[GHS] Auth DB not available:", e.message, "— auth will be disabled");
+}
+const authStmt = authDb ? authDb.prepare("SELECT u.pubkey FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = ? AND s.expires_at > unixepoch()") : null;
+
+// Session cache to avoid DB reads on every request
+const sessionCache = new Map(); // token → { pubkey, expires }
+setInterval(() => { const now = Date.now(); for (const [k,v] of sessionCache) { if (now > v.expires) sessionCache.delete(k); } }, 300_000);
+setInterval(() => { try { stmts.deleteOldHistory.run(); } catch (e) { console.error("[GHS] History cleanup error:", e.message); } }, 3600_000);
+try { stmts.deleteOldHistory.run(); } catch {}
+
+async function getUserPubkey(req) {
+  const token = req.headers["x-auth-token"];
+  if (!token || !authStmt) return null;
+  // Check cache
+  const cached = sessionCache.get(token);
+  if (cached && Date.now() < cached.expires) return cached.pubkey;
+  // Check DB
+  try {
+    const row = authStmt.get(token);
+    if (row) {
+      sessionCache.set(token, { pubkey: row.pubkey, expires: Date.now() + 60_000 }); // cache 1 min
+      return row.pubkey;
+    }
+  } catch (e) { console.error("[GHS] Auth DB query error:", e.message); }
+  return null;
 }
 
 function getClientIp(req) {
@@ -114,8 +161,8 @@ function getClientIp(req) {
 }
 
 // ─── Auth & Usage check middleware ───
-function checkUsage(req, res, next) {
-  const pubkey = getUserPubkey(req);
+async function checkUsage(req, res, next) {
+  const pubkey = await getUserPubkey(req);
   const ip = getClientIp(req);
   const fileCount = Array.isArray(req.files) ? req.files.length : (req.file ? 1 : 0);
 
@@ -193,6 +240,7 @@ setInterval(() => {
   for (const [key, entry] of rateLimitStore) {
     if (now - entry.windowStart > 120_000) rateLimitStore.delete(key);
   }
+  if (rateLimitStore.size > 50_000) rateLimitStore.clear();
 }, 300_000);
 
 function rateLimit(maxRequests, windowMs = 60_000) {
@@ -370,9 +418,18 @@ app.get("/api/payment/check/:hash", async (req, res) => {
   }
 });
 
+// Auth guard middleware for protected endpoints
+async function requireAuth(req, res, next) {
+  const pubkey = await getUserPubkey(req);
+  if (!pubkey) return res.status(401).json({ error: "Authentication required" });
+  req.verifiedPubkey = pubkey;
+  next();
+}
+
 // User info (credits, usage)
-app.get("/api/user/:pubkey", (req, res) => {
+app.get("/api/user/:pubkey", requireAuth, (req, res) => {
   const { pubkey } = req.params;
+  if (pubkey !== req.verifiedPubkey) return res.status(403).json({ error: "Forbidden" });
   const credits = stmts.getCredits.get(pubkey);
   const { cnt } = stmts.countByPubkey.get(pubkey);
 
@@ -454,6 +511,7 @@ Rules:
 - Max 12 precautionary statements.
 - Return ONLY valid JSON.`;
 
+  await acquireAiSlot();
   try {
     const message = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
@@ -495,7 +553,7 @@ Rules:
   } catch (err) {
     console.error(`[GHS] API error for ${filename}:`, err.message);
     return { success: false, error: "Failed to extract GHS information." };
-  }
+  } finally { releaseAiSlot(); }
 }
 
 // ─── Transport extraction ───
@@ -550,6 +608,7 @@ Rules:
 - IMPORTANT: PDF text extraction often garbles Korean/CJK characters. If you detect corrupted characters in ANY field, correct them to proper standard text. Never output garbled characters.
 - Return ONLY valid JSON, no markdown`;
 
+  await acquireAiSlot();
   try {
     const message = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
@@ -588,13 +647,13 @@ Rules:
   } catch (err) {
     console.error(`[TRANSPORT] API error for ${filename}:`, err.message);
     return { success: false, error: "Failed to extract transport information." };
-  }
+  } finally { releaseAiSlot(); }
 }
 
 // ─── Upload config ───
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype === "application/pdf") cb(null, true);
     else cb(new Error("Only PDF files are allowed"));
@@ -699,21 +758,22 @@ app.post("/api/transport/extract-batch", upload.array("files", 10), checkUsage, 
 });
 
 // ─── History ───
-app.get("/api/history/:pubkey", (req, res) => {
+app.get("/api/history/:pubkey", requireAuth, (req, res) => {
+  if (req.params.pubkey !== req.verifiedPubkey) return res.status(403).json({ error: "Forbidden" });
   const { pubkey } = req.params;
-  // Cleanup old entries (30 days)
-  try { stmts.deleteOldHistory.run(); } catch {}
   const items = stmts.getHistory.all(pubkey);
   res.json(items);
 });
 
-app.get("/api/history/:pubkey/:id", (req, res) => {
+app.get("/api/history/:pubkey/:id", requireAuth, (req, res) => {
+  if (req.params.pubkey !== req.verifiedPubkey) return res.status(403).json({ error: "Forbidden" });
   const item = stmts.getHistoryItem.get(Number(req.params.id), req.params.pubkey);
   if (!item) return res.status(404).json({ error: "Not found" });
   res.json({ ...item, data: JSON.parse(item.data) });
 });
 
-app.delete("/api/history/:pubkey/:id", (req, res) => {
+app.delete("/api/history/:pubkey/:id", requireAuth, (req, res) => {
+  if (req.params.pubkey !== req.verifiedPubkey) return res.status(403).json({ error: "Forbidden" });
   stmts.deleteHistoryItem.run(Number(req.params.id), req.params.pubkey);
   res.json({ ok: true });
 });
@@ -732,6 +792,7 @@ async function extractWithPrompt(buffer, language, filename, systemPrompt, logTa
   if (!pdfText || pdfText.trim().length < 50) {
     return { success: false, error: "Could not extract text from PDF." };
   }
+  await acquireAiSlot();
   try {
     const message = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
@@ -748,7 +809,7 @@ async function extractWithPrompt(buffer, language, filename, systemPrompt, logTa
   } catch (err) {
     console.error(`[${logTag}] API error for ${filename}:`, err.message);
     return { success: false, error: `Failed to extract ${logTag} information.` };
-  }
+  } finally { releaseAiSlot(); }
 }
 
 function batchRoute(path, promptFn, logTag, mode) {
