@@ -17,11 +17,26 @@ export interface TransportData {
   language: string;
 }
 
+const CLASS_SVG_MAP: Record<string, string> = {
+  "1": "/transport/class1.svg",
+  "2.1": "/transport/class2-1.svg",
+  "2.2": "/transport/class2-2.svg",
+  "2.3": "/transport/class2-3.svg",
+  "3": "/transport/class3.svg",
+  "4.1": "/transport/class4.svg",
+  "4.2": "/transport/class4-2.svg",
+  "4.3": "/transport/class4-3.svg",
+  "5.1": "/transport/class5.svg",
+  "5.2": "/transport/class5-2.svg",
+  "6": "/transport/class6.svg",
+  "6.1": "/transport/class6.svg",
+  "6.2": "/transport/class6.svg",
+  "8": "/transport/class8.svg",
+  "9": "/transport/class9.svg",
+};
+
 function classToSvg(hazardClass: string): string {
-  const c = hazardClass.split(".")[0];
-  const sub = hazardClass.split(".")[1];
-  if (c === "2") return sub === "1" ? "/transport/class2-1.svg" : "/transport/class2-2.svg";
-  return `/transport/class${c}.svg`;
+  return CLASS_SVG_MAP[hazardClass] || CLASS_SVG_MAP[hazardClass.split(".")[0]] || "/transport/class9.svg";
 }
 
 export function TransportLabel({ data }: { data: TransportData }) {
