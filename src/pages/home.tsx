@@ -38,7 +38,13 @@ declare global {
 export default function Home() {
   const [mode, setMode] = React.useState<Mode>("ghs");
   const [files, setFiles] = React.useState<File[]>([]);
-  const [language, setLanguage] = React.useState<string>("en");
+  const [language, setLanguageState] = React.useState<string>(() => {
+    try { return localStorage.getItem("ghs-lang") || "en"; } catch { return "en"; }
+  });
+  const setLanguage = (lang: string) => {
+    setLanguageState(lang);
+    try { localStorage.setItem("ghs-lang", lang); } catch {}
+  };
   const [processingStatus, setProcessingStatus] = React.useState<ProcessingStatus>("idle");
   const [results, setResults] = React.useState<BatchResultItem[]>([]);
   const [apiError, setApiError] = React.useState<string | null>(null);
@@ -49,6 +55,10 @@ export default function Home() {
     totalUsed: number; credits: number; plan: string;
     planExpiresAt: number; freeRemaining: number;
   } | null>(null);
+  const [history, setHistory] = React.useState<Array<{
+    id: number; mode: string; filename: string; created_at: number;
+  }>>([]);
+  const [historyItem, setHistoryItem] = React.useState<{ mode: string; data: any } | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const labelContainerRef = React.useRef<HTMLDivElement>(null);
 
@@ -69,14 +79,31 @@ export default function Home() {
 
   // Fetch user info when pubkey changes
   const fetchUserInfo = React.useCallback(async () => {
-    if (!userPubkey) { setUserInfo(null); return; }
+    if (!userPubkey) { setUserInfo(null); setHistory([]); return; }
     try {
-      const res = await fetch(`/api/user/${userPubkey}`);
-      if (res.ok) setUserInfo(await res.json());
+      const [userRes, histRes] = await Promise.all([
+        fetch(`/api/user/${userPubkey}`),
+        fetch(`/api/history/${userPubkey}`),
+      ]);
+      if (userRes.ok) setUserInfo(await userRes.json());
+      if (histRes.ok) setHistory(await histRes.json());
     } catch {}
   }, [userPubkey]);
 
   React.useEffect(() => { fetchUserInfo(); }, [fetchUserInfo]);
+
+  const loadHistoryItem = async (id: number) => {
+    if (!userPubkey) return;
+    try {
+      const res = await fetch(`/api/history/${userPubkey}/${id}`);
+      if (!res.ok) return;
+      const item = await res.json();
+      setHistoryItem(item);
+      setMode(item.mode);
+      setResults([{ filename: item.filename, status: "success", data: item.data, error: null }]);
+      setProcessingStatus("done");
+    } catch {}
+  };
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -274,7 +301,7 @@ export default function Home() {
         {processingStatus !== "done" ? (
           /* Upload Section — 2-column layout */
           <div className="max-w-5xl mx-auto">
-            <div className="lg:grid lg:grid-cols-[340px_1fr] lg:gap-8">
+            <div className="xl:grid xl:grid-cols-[300px_1fr_260px] lg:grid lg:grid-cols-[280px_1fr] lg:gap-6">
 
               {/* Left: Info Panel */}
               <aside className="space-y-5 mb-8 lg:mb-0 lg:sticky lg:top-8 lg:self-start print:hidden">
@@ -326,59 +353,14 @@ export default function Home() {
                   <p className="text-[10px] text-muted-foreground">Pay with Bitcoin Lightning. Instant activation.</p>
                 </div>
 
-                {/* Login status */}
-                {userPubkey && userInfo ? (
-                  <div className="rounded-lg border bg-card p-3 space-y-2.5 text-xs">
-                    <div className="flex items-center justify-between">
-                      <p className="text-emerald-600 font-semibold">⚡ Logged in</p>
-                      <p className="text-muted-foreground font-mono">{userPubkey.slice(0, 8)}…{userPubkey.slice(-4)}</p>
-                    </div>
-                    <div className="border-t"></div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="rounded-md bg-muted/50 p-2 text-center">
-                        <p className="text-lg font-bold text-primary">{userInfo.credits || userInfo.freeRemaining}</p>
-                        <p className="text-[10px] text-muted-foreground">{userInfo.credits > 0 ? "Credits left" : "Free left"}</p>
-                      </div>
-                      <div className="rounded-md bg-muted/50 p-2 text-center">
-                        <p className="text-lg font-bold">{userInfo.totalUsed}</p>
-                        <p className="text-[10px] text-muted-foreground">Total used</p>
-                      </div>
-                    </div>
-                    {userInfo.plan !== "free" && userInfo.planExpiresAt > 0 && (
-                      <div className="flex justify-between text-[11px]">
-                        <span className="text-muted-foreground">Plan</span>
-                        <span className="font-medium capitalize">{userInfo.plan}</span>
-                      </div>
-                    )}
-                    {userInfo.plan !== "free" && userInfo.planExpiresAt > 0 && (
-                      <div className="flex justify-between text-[11px]">
-                        <span className="text-muted-foreground">Expires</span>
-                        <span className="font-medium">{new Date(userInfo.planExpiresAt * 1000).toLocaleDateString()}</span>
-                      </div>
-                    )}
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="w-full text-xs h-7"
-                      onClick={() => setNeedsPayment(true)}
-                    >
-                      Buy More Credits
-                    </Button>
-                  </div>
-                ) : userPubkey ? (
-                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs">
-                    <p className="text-emerald-600 font-medium">⚡ Logged in</p>
-                    <p className="text-muted-foreground font-mono mt-0.5">{userPubkey.slice(0, 12)}...{userPubkey.slice(-6)}</p>
-                  </div>
-                ) : (
-                  <div className="text-xs text-muted-foreground space-y-1">
+                {!userPubkey && (
+                  <div className="text-xs text-muted-foreground space-y-1 xl:hidden">
                     <p>Sign in with a Lightning wallet to track usage and buy credits.</p>
-                    <p>Try <a href="https://phoenix.acinq.co/" target="_blank" rel="noopener" className="underline text-primary">Phoenix</a>, <a href="https://muun.com/" target="_blank" rel="noopener" className="underline text-primary">Muun</a>, or <a href="https://www.walletofsatoshi.com/" target="_blank" rel="noopener" className="underline text-primary">Wallet of Satoshi</a>.</p>
                   </div>
                 )}
               </aside>
 
-              {/* Right: Upload area */}
+              {/* Center: Upload area */}
               <div className="space-y-6">
 
             {/* Mode Tabs */}
@@ -558,8 +540,89 @@ export default function Home() {
               </CardContent>
             </Card>
 
-              </div>{/* end right column */}
-            </div>{/* end 2-col grid */}
+              </div>{/* end center column */}
+
+              {/* Right column: Account & History (xl only, lg shows inline) */}
+              <aside className="hidden xl:block space-y-4 lg:sticky lg:top-8 lg:self-start print:hidden">
+                {userPubkey && userInfo ? (
+                  <div className="rounded-lg border bg-card p-3 space-y-2.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <p className="text-emerald-600 font-semibold">Account</p>
+                      <p className="text-muted-foreground font-mono">{userPubkey.slice(0, 8)}...{userPubkey.slice(-4)}</p>
+                    </div>
+                    <div className="border-t"></div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-md bg-muted/50 p-2 text-center">
+                        <p className="text-lg font-bold text-primary">{userInfo.credits || userInfo.freeRemaining}</p>
+                        <p className="text-[10px] text-muted-foreground">{userInfo.credits > 0 ? "Credits" : "Free left"}</p>
+                      </div>
+                      <div className="rounded-md bg-muted/50 p-2 text-center">
+                        <p className="text-lg font-bold">{userInfo.totalUsed}</p>
+                        <p className="text-[10px] text-muted-foreground">Used</p>
+                      </div>
+                    </div>
+                    {userInfo.plan !== "free" && userInfo.planExpiresAt > 0 && (
+                      <>
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-muted-foreground">Plan</span>
+                          <span className="font-medium capitalize">{userInfo.plan}</span>
+                        </div>
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-muted-foreground">Expires</span>
+                          <span className="font-medium">{new Date(userInfo.planExpiresAt * 1000).toLocaleDateString()}</span>
+                        </div>
+                      </>
+                    )}
+                    <Button size="sm" variant="outline" className="w-full text-xs h-7" onClick={() => setNeedsPayment(true)}>
+                      Buy More Credits
+                    </Button>
+                  </div>
+                ) : userPubkey ? (
+                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs">
+                    <p className="text-emerald-600 font-medium">Logged in</p>
+                    <p className="text-muted-foreground font-mono mt-0.5">{userPubkey.slice(0, 10)}...</p>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border bg-card p-4 text-center space-y-3">
+                    <div className="text-3xl">⚡</div>
+                    <p className="text-sm font-semibold">Lightning Login</p>
+                    <p className="text-xs text-muted-foreground">Sign in with your Bitcoin Lightning wallet to track usage and purchase credits.</p>
+                    <Button size="sm" className="w-full" onClick={() => window.txidAuth?.openLogin?.()}>
+                      Login
+                    </Button>
+                    <p className="text-[10px] text-muted-foreground">
+                      Try <a href="https://phoenix.acinq.co/" target="_blank" rel="noopener" className="underline text-primary">Phoenix</a> or <a href="https://www.walletofsatoshi.com/" target="_blank" rel="noopener" className="underline text-primary">Wallet of Satoshi</a>
+                    </p>
+                  </div>
+                )}
+
+                {userPubkey && history.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="font-semibold text-sm">Recent Labels</p>
+                    <div className="rounded-lg border bg-card max-h-64 overflow-y-auto">
+                      {history.slice(0, 20).map((item) => (
+                        <button
+                          key={item.id}
+                          onClick={() => loadHistoryItem(item.id)}
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-muted/50 border-b last:border-b-0 transition-colors"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate font-medium">{item.filename}</span>
+                            <span className={`flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded ${item.mode === "transport" ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300" : "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"}`}>
+                              {item.mode === "transport" ? "TR" : "GHS"}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
+                            {new Date(item.created_at * 1000).toLocaleDateString()}
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </aside>
+
+            </div>{/* end 3-col grid */}
           </div>
         ) : (
           /* Results Section */
