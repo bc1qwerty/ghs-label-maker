@@ -638,8 +638,14 @@ export default function Home() {
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="truncate font-medium">{item.filename}</span>
-                            <span className={`flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded ${item.mode === "transport" ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300" : "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"}`}>
-                              {item.mode === "transport" ? "TR" : "GHS"}
+                            <span className={`flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded ${{
+                              ghs: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
+                              transport: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
+                              dgd: "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300",
+                              "sds-convert": "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300",
+                              un383: "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300",
+                            }[item.mode] || "bg-gray-100 text-gray-700"}`}>
+                              {{ ghs:"GHS", transport:"TR", dgd:"DGD", "sds-convert":"SDS", un383:"38.3" }[item.mode] || item.mode}
                             </span>
                           </div>
                           <p className="text-[10px] text-muted-foreground mt-0.5">

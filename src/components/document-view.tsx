@@ -81,12 +81,28 @@ export function DocumentView({ title, data, mode }: DocumentViewProps) {
         </h1>
       </div>
 
-      {/* Body */}
+      {/* Body — SDS sections get special rendering */}
+      {mode === "sds-convert" && data.sections && typeof data.sections === "object" ? (
+        <div style={{ padding: "16px 24px" }}>
+          {Object.entries(data.sections as Record<string, { title?: string; content?: string }>)
+            .sort(([a], [b]) => Number(a) - Number(b))
+            .map(([num, sec]) => (
+              <div key={num} style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#cc0000", borderBottom: "2px solid #eee", paddingBottom: 4, marginBottom: 6 }}>
+                  Section {num}: {sec.title || ""}
+                </div>
+                <div style={{ fontSize: 12, lineHeight: 1.6, color: "#333", whiteSpace: "pre-wrap" }}>
+                  {sec.content || "No data available"}
+                </div>
+              </div>
+            ))}
+        </div>
+      ) : (
       <div style={{ padding: "16px 24px" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <tbody>
             {Object.entries(data)
-              .filter(([k]) => !skipKeys.includes(k))
+              .filter(([k]) => !skipKeys.includes(k) && k !== "sections")
               .map(([key, val]) => (
                 <tr key={key} style={{ borderBottom: "1px solid #eee" }}>
                   <td style={{ padding: "8px 8px 8px 0", fontWeight: 700, color: "#555", width: "35%", verticalAlign: "top" }}>
@@ -100,6 +116,7 @@ export function DocumentView({ title, data, mode }: DocumentViewProps) {
           </tbody>
         </table>
       </div>
+      )}
 
       {/* Footer */}
       <div style={{ padding: "10px 24px", backgroundColor: "#f5f5f5", borderTop: "2px solid #ddd", fontSize: 10, color: "#888", textAlign: "center" }}>
