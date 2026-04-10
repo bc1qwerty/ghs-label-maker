@@ -273,14 +273,14 @@ export default function Home() {
         .filter((r) => r.status === "success" && r.data)
         .map((r) => r.filename.replace(/\.pdf$/i, ""));
 
+      const suffix = mode === "transport" ? "trslabel" : "ghslabel";
       let pdfFilename: string;
       if (successFilenames.length === 1) {
-        pdfFilename = `${successFilenames[0]}_ghslabel.pdf`;
+        pdfFilename = `${successFilenames[0]}_${suffix}.pdf`;
       } else {
         const dateStr = new Date().toISOString().slice(0, 10);
-        pdfFilename = language === "ko"
-          ? `GHS_표지_${successFilenames.length}개_ghslabel_${dateStr}.pdf`
-          : `GHS_Labels_${successFilenames.length}files_ghslabel_${dateStr}.pdf`;
+        const prefix = mode === "transport" ? "Transport_Labels" : "GHS_Labels";
+        pdfFilename = `${prefix}_${successFilenames.length}files_${suffix}_${dateStr}.pdf`;
       }
       pdf.save(pdfFilename);
     } catch (err) {

@@ -184,6 +184,52 @@ function recordUsage(pubkey, ip, count) {
   record();
 }
 
+// ─── Rate Limiting (in-memory, per IP) ───
+const rateLimitStore = new Map();
+
+// Cleanup stale entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitStore) {
+    if (now - entry.windowStart > 120_000) rateLimitStore.delete(key);
+  }
+}, 300_000);
+
+function rateLimit(maxRequests, windowMs = 60_000) {
+  return (req, res, next) => {
+    const ip = getClientIp(req);
+    const key = `${ip}:${maxRequests}`;
+    const now = Date.now();
+
+    let entry = rateLimitStore.get(key);
+    if (!entry || now - entry.windowStart > windowMs) {
+      entry = { windowStart: now, count: 0 };
+      rateLimitStore.set(key, entry);
+    }
+
+    entry.count++;
+    if (entry.count > maxRequests) {
+      const retryAfter = Math.ceil((entry.windowStart + windowMs - now) / 1000);
+      res.set("Retry-After", String(retryAfter));
+      return res.status(429).json({
+        error: "Too many requests",
+        message: `Rate limit exceeded. Try again in ${retryAfter} seconds.`,
+        retryAfter,
+      });
+    }
+
+    next();
+  };
+}
+
+const apiRateLimit = rateLimit(30);       // 30 req/min for API endpoints
+const paymentRateLimit = rateLimit(10);   // 10 req/min for payment endpoints
+
+// Apply rate limits to API routes
+app.use("/api/ghs", apiRateLimit);
+app.use("/api/transport", apiRateLimit);
+app.use("/api/payment", paymentRateLimit);
+
 // ─── Lightning payments ───
 function phoenixdAuth() {
   return "Basic " + Buffer.from(":" + PHOENIXD_PASSWORD).toString("base64");
@@ -401,6 +447,7 @@ Names: ${Object.entries(picNames).map(([k,v])=>`${k}:${v}`).join(", ")}
 Rules:
 - Search Section 2 for explicit pictograms first. Only infer from H-codes if none found.
 - Use STANDARD ${langLabel} H/P-statement text, not corrupted PDF text.
+- IMPORTANT: PDF text extraction often garbles Korean/CJK characters (e.g. "전"→"젂", "안"→"앆"). If you detect corrupted characters in ANY field (product name, supplier, laws, statements), correct them to the proper standard text. Never output garbled characters.
 - Max 12 precautionary statements.
 - Return ONLY valid JSON.`;
 
@@ -497,6 +544,7 @@ Rules:
 - Focus on Section 14 (Transport Information) of the MSDS
 - If the substance is not regulated for transport, set notRegulated=true and unNumber="Not regulated"
 - Use standard ${langLabel} terminology
+- IMPORTANT: PDF text extraction often garbles Korean/CJK characters. If you detect corrupted characters in ANY field, correct them to proper standard text. Never output garbled characters.
 - Return ONLY valid JSON, no markdown`;
 
   try {
