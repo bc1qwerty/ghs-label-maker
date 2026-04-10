@@ -249,7 +249,7 @@ app.get("/api/payment/price/:count", (req, res) => {
 app.post("/api/payment/create-batch", express.json(), async (req, res) => {
   const { fileCount, pubkey } = req.body;
   if (!pubkey) return res.status(400).json({ error: "Login required" });
-  if (!fileCount || fileCount < 1 || fileCount > 30) return res.status(400).json({ error: "File count must be 1-30" });
+  if (!fileCount || fileCount < 1 || fileCount > 10) return res.status(400).json({ error: "File count must be 1-30" });
   if (!PHOENIXD_PASSWORD) return res.status(503).json({ error: "Payment not configured" });
 
   const price = calcBatchPrice(fileCount);
@@ -619,7 +619,7 @@ app.post("/api/ghs/extract", upload.single("file"), checkUsage, async (req, res)
 });
 
 // Batch extraction
-app.post("/api/ghs/extract-batch", upload.array("files", 30), checkUsage, async (req, res) => {
+app.post("/api/ghs/extract-batch", upload.array("files", 10), checkUsage, async (req, res) => {
   const files = req.files;
   const language = req.body.language;
   if (!files || files.length === 0) return res.status(400).json({ error: "No PDF files uploaded" });
@@ -667,7 +667,7 @@ app.post("/api/transport/extract", upload.single("file"), checkUsage, async (req
 });
 
 // Transport batch extraction
-app.post("/api/transport/extract-batch", upload.array("files", 30), checkUsage, async (req, res) => {
+app.post("/api/transport/extract-batch", upload.array("files", 10), checkUsage, async (req, res) => {
   const files = req.files;
   const language = req.body.language;
   if (!files || files.length === 0) return res.status(400).json({ error: "No PDF files uploaded" });
@@ -752,7 +752,7 @@ async function extractWithPrompt(buffer, language, filename, systemPrompt, logTa
 }
 
 function batchRoute(path, promptFn, logTag, mode) {
-  app.post(path, upload.array("files", 30), checkUsage, async (req, res) => {
+  app.post(path, upload.array("files", 10), checkUsage, async (req, res) => {
     const files = req.files;
     const language = req.body.language;
     if (!files || files.length === 0) return res.status(400).json({ error: "No PDF files uploaded" });

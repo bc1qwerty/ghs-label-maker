@@ -320,7 +320,7 @@ export default function Home() {
                   <p className="text-sm text-muted-foreground leading-relaxed">
                     Upload MSDS (Safety Data Sheet) PDFs and instantly generate
                     GHS-compliant hazard labels powered by AI. Supports batch
-                    processing up to 30 files.
+                    processing up to 10 files.
                   </p>
                 </div>
 
@@ -392,13 +392,30 @@ export default function Home() {
               ))}
             </div>
 
+            {/* Mode description */}
+            <div className="rounded-md border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+              {{
+                ghs: "Upload MSDS/SDS PDFs to generate GHS-compliant hazard labels with pictograms, signal words, and H/P statements.",
+                transport: "Extract transport information (Section 14) and generate UN dangerous goods diamond labels.",
+                dgd: "Generate IATA Shipper's Declaration for Dangerous Goods form data from MSDS/SDS documents.",
+                "sds-convert": "Convert old-format MSDS (8-section) into GHS-compliant 16-section Safety Data Sheets.",
+                un383: "Extract UN38.3 battery transport test summary data from test reports or battery-related MSDS.",
+              }[mode]}
+            </div>
+
             <Card className="border-2 shadow-sm">
               <CardHeader>
                 <CardTitle className="text-lg">
-                  {"File Upload"}
+                  File Upload
                 </CardTitle>
                 <CardDescription>
-                  {"Only PDF files are supported. Up to 30 files."}
+                  {{
+                    ghs: "Upload MSDS/SDS PDF files. Up to 10 files.",
+                    transport: "Upload MSDS/SDS PDF files. Up to 10 files.",
+                    dgd: "Upload MSDS/SDS PDF files for DGD extraction. Up to 10 files.",
+                    "sds-convert": "Upload old-format MSDS PDFs to convert. Up to 10 files.",
+                    un383: "Upload battery test reports or MSDS PDFs. Up to 10 files.",
+                  }[mode]}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -520,7 +537,7 @@ export default function Home() {
                       {`Analyzing ${files.length} file(s)...`}
                     </>
                   ) : (
-                    `Generate (${files.length} file${files.length !== 1 ? "s" : ""})`
+                    `${{ ghs: "Generate GHS Labels", transport: "Generate Transport Labels", dgd: "Generate DGD", "sds-convert": "Convert SDS", un383: "Generate UN38.3" }[mode]} (${files.length})`
                   )}
                 </Button>
 
