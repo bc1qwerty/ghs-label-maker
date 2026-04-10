@@ -315,19 +315,11 @@ export default function Home() {
 
               {/* Left: Info Panel */}
               <aside className="space-y-5 mb-8 lg:mb-0 lg:sticky lg:top-8 lg:self-start print:hidden">
-                <div>
-                  <h2 className="text-2xl font-bold tracking-tight mb-2">GHS Label Generator</h2>
-                  <p className="text-sm text-muted-foreground leading-relaxed">
-                    Upload MSDS (Safety Data Sheet) PDFs and instantly generate
-                    GHS-compliant hazard labels powered by AI. Supports batch
-                    processing up to 10 files.
-                  </p>
-                </div>
 
                 {/* Notice */}
                 <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-3 text-xs text-muted-foreground leading-relaxed">
                   <p className="font-semibold text-yellow-600 dark:text-yellow-400 mb-1">Why paid?</p>
-                  <p>This tool was originally free, but overwhelming demand made it unsustainable. To keep the service running reliably, we now use a low-cost credit system. Your first 3 extractions are still free.</p>
+                  <p>First 3 extractions free. After that, pay per use with Bitcoin Lightning.</p>
                 </div>
 
                 {/* How it works */}
@@ -376,31 +368,21 @@ export default function Home() {
             {/* Mode Tabs */}
             <div className="flex flex-wrap rounded-lg border bg-muted/30 p-1 gap-0.5">
               {([
-                ["ghs", "GHS Label"],
-                ["transport", "Transport"],
-                ["dgd", "IATA DGD"],
-                ["sds-convert", "SDS Convert"],
-                ["un383", "UN38.3"],
-              ] as [Mode, string][]).map(([m, label]) => (
+                ["ghs", "GHS Label", "Generate GHS hazard labels from MSDS"],
+                ["transport", "Transport", "Generate UN dangerous goods transport labels"],
+                ["dgd", "IATA DGD", "Shipper's Declaration for Dangerous Goods"],
+                ["sds-convert", "SDS Convert", "Convert old MSDS to 16-section GHS format"],
+                ["un383", "UN38.3", "Battery transport test summary document"],
+              ] as [Mode, string, string][]).map(([m, label, tooltip]) => (
                 <button
                   key={m}
                   onClick={() => { setMode(m); setResults([]); setProcessingStatus("idle"); setApiError(null); }}
+                  title={tooltip}
                   className={`flex-1 py-2 px-3 rounded-md text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap ${mode === m ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground"}`}
                 >
                   {label}
                 </button>
               ))}
-            </div>
-
-            {/* Mode description */}
-            <div className="rounded-md border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
-              {{
-                ghs: "Upload MSDS/SDS PDFs to generate GHS-compliant hazard labels with pictograms, signal words, and H/P statements.",
-                transport: "Extract transport information (Section 14) and generate UN dangerous goods diamond labels.",
-                dgd: "Generate IATA Shipper's Declaration for Dangerous Goods form data from MSDS/SDS documents.",
-                "sds-convert": "Convert old-format MSDS (8-section) into GHS-compliant 16-section Safety Data Sheets.",
-                un383: "Extract UN38.3 battery transport test summary data from test reports or battery-related MSDS.",
-              }[mode]}
             </div>
 
             <Card className="border-2 shadow-sm">
