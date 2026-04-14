@@ -641,6 +641,14 @@ export default function Home() {
                     <Button size="sm" className="w-full" onClick={() => window.txidAuth?.openLogin?.()}>
                       Login
                     </Button>
+                    <a
+                      href="https://learn.txid.uk/en/articles/lightning-login/"
+                      target="_blank"
+                      rel="noopener"
+                      className="block w-full text-xs px-3 py-1.5 rounded-md border border-border hover:border-primary hover:text-primary transition-colors"
+                    >
+                      What is Lightning login?
+                    </a>
                     <p className="text-[10px] text-muted-foreground">
                       Try <a href="https://phoenix.acinq.co/" target="_blank" rel="noopener" className="underline text-primary">Phoenix</a> or <a href="https://www.walletofsatoshi.com/" target="_blank" rel="noopener" className="underline text-primary">Wallet of Satoshi</a>
                     </p>
