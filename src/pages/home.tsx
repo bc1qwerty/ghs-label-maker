@@ -329,10 +329,10 @@ export default function Home() {
   const errorCount = results.filter((r) => r.status === "error").length;
 
   return (
-    <div className="min-h-[100dvh] w-full bg-background flex flex-col">
+    <div className="min-h-[100dvh] w-full bg-background grid grid-rows-[1fr_auto]">
       {/* Header is in index.html (static, for txid-auth mount timing) */}
 
-      <main className="flex-1 container mx-auto px-4 py-8">
+      <main className="container mx-auto px-4 py-8 w-full">
         {processingStatus !== "done" ? (
           /* Upload Section — 2-column layout */
           <div className="max-w-5xl mx-auto">
@@ -800,7 +800,7 @@ export default function Home() {
         )}
       </main>
 
-      <footer className="print:hidden border-t mt-16 py-6">
+      <footer className="print:hidden border-t py-4">
         <div className="max-w-6xl mx-auto px-4 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
           <span>&copy; {new Date().getFullYear()} GHS Label Maker</span>
           <nav className="flex flex-wrap gap-4">
