@@ -6,6 +6,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sun, Moon } from "lucide-react";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
+import Terms from "@/pages/terms";
+import Privacy from "@/pages/privacy";
 
 const queryClient = new QueryClient();
 
@@ -13,6 +15,8 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/terms" component={Terms} />
+      <Route path="/privacy" component={Privacy} />
       <Route component={NotFound} />
     </Switch>
   );

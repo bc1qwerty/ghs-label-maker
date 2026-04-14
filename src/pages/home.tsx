@@ -799,6 +799,17 @@ export default function Home() {
           </div>
         )}
       </main>
+
+      <footer className="print:hidden border-t mt-16 py-6">
+        <div className="max-w-6xl mx-auto px-4 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+          <span>&copy; {new Date().getFullYear()} GHS Label Maker</span>
+          <nav className="flex flex-wrap gap-4">
+            <a href="/terms" className="hover:text-primary transition-colors">Terms of Service</a>
+            <a href="/privacy" className="hover:text-primary transition-colors">Privacy Policy</a>
+            <a href="mailto:admin@txid.uk" className="hover:text-primary transition-colors">Contact</a>
+          </nav>
+        </div>
+      </footer>
     </div>
   );
 }
