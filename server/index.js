@@ -139,8 +139,16 @@ setInterval(() => { const now = Date.now(); for (const [k,v] of sessionCache) { 
 setInterval(() => { try { stmts.deleteOldHistory.run(); } catch (e) { console.error("[GHS] History cleanup error:", e.message); } }, 3600_000);
 try { stmts.deleteOldHistory.run(); } catch {}
 
+function readCookie(req, name) {
+  const c = req.headers.cookie;
+  if (!c) return null;
+  const m = c.match(new RegExp("(?:^|;\\s*)" + name + "=([^;]+)"));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 async function getUserPubkey(req) {
-  const token = req.headers["x-auth-token"];
+  // Prefer explicit header (legacy SPA path), fall back to shared .txid.uk cookie
+  const token = req.headers["x-auth-token"] || readCookie(req, "txid_session");
   if (!token || !authStmt) return null;
   // Check cache
   const cached = sessionCache.get(token);

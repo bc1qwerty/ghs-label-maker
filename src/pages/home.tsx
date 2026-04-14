@@ -103,12 +103,13 @@ export default function Home() {
 
   // Fetch user info when pubkey changes
   const fetchUserInfo = React.useCallback(async () => {
-    if (!userPubkey || !ghsToken) { setUserInfo(null); setHistory([]); return; }
-    const authHeaders = { "X-Auth-Token": ghsToken };
+    if (!userPubkey) { setUserInfo(null); setHistory([]); return; }
+    const authHeaders: Record<string, string> = {};
+    if (ghsToken) authHeaders["X-Auth-Token"] = ghsToken;
     try {
       const [userRes, histRes] = await Promise.all([
-        fetch(`/api/user/${userPubkey}`, { headers: authHeaders }),
-        fetch(`/api/history/${userPubkey}`, { headers: authHeaders }),
+        fetch(`/api/user/${userPubkey}`, { headers: authHeaders, credentials: "include" }),
+        fetch(`/api/history/${userPubkey}`, { headers: authHeaders, credentials: "include" }),
       ]);
       if (userRes.ok) setUserInfo(await userRes.json());
       if (histRes.ok) setHistory(await histRes.json());
