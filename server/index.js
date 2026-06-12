@@ -6,91 +6,30 @@ import Anthropic from "@anthropic-ai/sdk";
 import path from "path";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
+import { createDb } from "./db.js";
+import { PLANS, BATCH_MAX_FILES, calcBatchPrice, settlePayment, recordUsage as recordUsageImpl } from "./payments.js";
+
+// Load .env from the working directory (node 22+ builtin). The VPS pm2
+// process used to depend on env vars captured at first `pm2 start` — a
+// reboot + resurrect would have silently dropped ANTHROPIC_API_KEY and
+// PHOENIXD_PASSWORD (payments + AI dead, /api/health still green).
+try { process.loadEnvFile(); } catch { /* no .env in dev — fine */ }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3100;
 
 // ─── Database ───
-const db = new Database(path.join(__dirname, "ghs.db"));
-db.pragma("journal_mode = WAL");
-db.exec(`
-  CREATE TABLE IF NOT EXISTS usage (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    pubkey TEXT,
-    ip TEXT,
-    created_at INTEGER DEFAULT (unixepoch())
-  );
-  CREATE TABLE IF NOT EXISTS credits (
-    pubkey TEXT PRIMARY KEY,
-    amount INTEGER DEFAULT 0,
-    plan TEXT DEFAULT 'free',
-    plan_expires_at INTEGER DEFAULT 0
-  );
-  CREATE TABLE IF NOT EXISTS payments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    pubkey TEXT NOT NULL,
-    payment_hash TEXT UNIQUE,
-    amount_sats INTEGER,
-    plan TEXT,
-    status TEXT DEFAULT 'pending',
-    created_at INTEGER DEFAULT (unixepoch())
-  );
-  CREATE TABLE IF NOT EXISTS history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    pubkey TEXT NOT NULL,
-    mode TEXT NOT NULL DEFAULT 'ghs',
-    filename TEXT,
-    data TEXT,
-    created_at INTEGER DEFAULT (unixepoch())
-  );
-  CREATE INDEX IF NOT EXISTS idx_usage_pubkey ON usage(pubkey);
-  CREATE INDEX IF NOT EXISTS idx_usage_ip ON usage(ip);
-  CREATE INDEX IF NOT EXISTS idx_history_pubkey ON history(pubkey);
-`);
+const { db, stmts } = createDb(path.join(__dirname, "ghs.db"));
 
-const stmts = {
-  countByPubkey: db.prepare("SELECT COUNT(*) as cnt FROM usage WHERE pubkey = ?"),
-  countByIp: db.prepare("SELECT COUNT(*) as cnt FROM usage WHERE ip = ? AND pubkey IS NULL"),
-  recordUsage: db.prepare("INSERT INTO usage (pubkey, ip) VALUES (?, ?)"),
-  getCredits: db.prepare("SELECT * FROM credits WHERE pubkey = ?"),
-  upsertCredits: db.prepare(`
-    INSERT INTO credits (pubkey, amount, plan, plan_expires_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(pubkey) DO UPDATE SET amount=?, plan=?, plan_expires_at=?
-  `),
-  deductCredit: db.prepare("UPDATE credits SET amount = amount - 1 WHERE pubkey = ? AND amount > 0"),
-  createPayment: db.prepare("INSERT INTO payments (pubkey, payment_hash, amount_sats, plan) VALUES (?, ?, ?, ?)"),
-  getPayment: db.prepare("SELECT * FROM payments WHERE payment_hash = ?"),
-  completePayment: db.prepare("UPDATE payments SET status = 'paid' WHERE payment_hash = ?"),
-  saveHistory: db.prepare("INSERT INTO history (pubkey, mode, filename, data) VALUES (?, ?, ?, ?)"),
-  getHistory: db.prepare("SELECT id, mode, filename, created_at FROM history WHERE pubkey = ? ORDER BY created_at DESC LIMIT 100"),
-  getHistoryItem: db.prepare("SELECT * FROM history WHERE id = ? AND pubkey = ?"),
-  deleteHistoryItem: db.prepare("DELETE FROM history WHERE id = ? AND pubkey = ?"),
-  deleteOldHistory: db.prepare("DELETE FROM history WHERE created_at < unixepoch() - 86400 * 30"),
-};
+// stmts come from createDb (server/db.js).
 
 // ─── Config ───
 const FREE_LIMIT = 3;
 const PHOENIXD_URL = process.env.PHOENIXD_URL || "http://127.0.0.1:9740";
 const PHOENIXD_PASSWORD = process.env.PHOENIXD_PASSWORD || "";
 
-const PLANS = {
-  single:  { sats: 100,   credits: 1,    label: "1 extraction" },
-  weekly:  { sats: 3000,  credits: 50,   label: "Weekly (50)", days: 7 },
-  monthly: { sats: 9900,  credits: 200,  label: "Monthly (200)", days: 30 },
-  annual:  { sats: 79000, credits: 2400, label: "Annual (2400)", days: 365 },
-};
-
-// Per-file pricing with volume discounts
-function calcBatchPrice(fileCount) {
-  if (fileCount <= 0) return { perFile: 100, total: 0, discount: 0 };
-  let perFile;
-  if (fileCount >= 20) perFile = 50;       // 50% off
-  else if (fileCount >= 10) perFile = 70;  // 30% off
-  else if (fileCount >= 5) perFile = 85;   // 15% off
-  else perFile = 100;
-  return { perFile, total: perFile * fileCount, discount: Math.round((1 - perFile / 100) * 100) };
-}
+// PLANS / calcBatchPrice / settlePayment live in server/payments.js.
 
 // ─── PDF parser ───
 const _require = createRequire(import.meta.url);
@@ -223,20 +162,7 @@ async function checkUsage(req, res, next) {
 
 // Record usage after successful extraction
 function recordUsage(pubkey, ip, count) {
-  const record = db.transaction(() => {
-    for (let i = 0; i < count; i++) {
-      stmts.recordUsage.run(pubkey, ip);
-    }
-    if (pubkey) {
-      const credits = stmts.getCredits.get(pubkey);
-      if (credits && credits.amount > 0 && credits.plan !== "free") {
-        for (let i = 0; i < count; i++) {
-          stmts.deductCredit.run(pubkey);
-        }
-      }
-    }
-  });
-  record();
+  recordUsageImpl(db, stmts, pubkey, ip, count);
 }
 
 // ─── Rate Limiting (in-memory, per IP) ───
@@ -305,7 +231,7 @@ app.get("/api/payment/price/:count", (req, res) => {
 app.post("/api/payment/create-batch", express.json(), async (req, res) => {
   const { fileCount, pubkey } = req.body;
   if (!pubkey) return res.status(400).json({ error: "Login required" });
-  if (!fileCount || fileCount < 1 || fileCount > 10) return res.status(400).json({ error: "File count must be 1-30" });
+  if (!fileCount || fileCount < 1 || fileCount > BATCH_MAX_FILES) return res.status(400).json({ error: "File count must be 1-30" });
   if (!PHOENIXD_PASSWORD) return res.status(503).json({ error: "Payment not configured" });
 
   const price = calcBatchPrice(fileCount);
@@ -389,34 +315,12 @@ app.get("/api/payment/check/:hash", async (req, res) => {
     const data = await resp.json();
 
     if (data.isPaid) {
-      stmts.completePayment.run(hash);
-
-      // Add credits
-      const pubkey = payment.pubkey;
-      const now = Math.floor(Date.now() / 1000);
-      const existing = stmts.getCredits.get(pubkey);
-      const currentAmount = existing ? existing.amount : 0;
-
-      // Handle batch payments (batch-5, batch-10, etc.) and plan payments
-      let creditsToAdd, expiresAt;
-      if (payment.plan.startsWith("batch-")) {
-        creditsToAdd = parseInt(payment.plan.split("-")[1]) || 1;
-        expiresAt = existing?.plan_expires_at || 0;
-      } else {
-        const plan = PLANS[payment.plan];
-        if (!plan) return res.json({ paid: true });
-        creditsToAdd = plan.credits;
-        expiresAt = plan.days ? now + plan.days * 86400 : 0;
-      }
-      const newAmount = currentAmount + creditsToAdd;
-
-      const planName = payment.plan.startsWith("batch-") ? (existing?.plan || "payg") : payment.plan;
-      stmts.upsertCredits.run(
-        pubkey, newAmount, planName, expiresAt,
-        newAmount, planName, expiresAt
-      );
-
-      return res.json({ paid: true, credits: newAmount, plan: payment.plan });
+      // Transactional + idempotent (server/payments.js): only the first
+      // poll settles; concurrent polls for the same hash get paid:true
+      // without double-crediting.
+      const result = settlePayment(db, stmts, PLANS, payment);
+      if (!result) return res.json({ paid: true });
+      return res.json({ paid: true, credits: result.credits, plan: payment.plan });
     }
 
     res.json({ paid: false });

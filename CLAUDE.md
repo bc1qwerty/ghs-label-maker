@@ -33,4 +33,4 @@ npm run start     # Build + start server
 - `ANTHROPIC_API_KEY` -- Required for AI-powered SDS analysis
 
 ## Status
-- Development complete, local use
+- ghs.txid.uk 라이브 운영 (VPS pm2 ghs-label, port 3100, Lightning 결제 활성). 배포는 ./deploy.sh 단일 경로 (VPS는 non-git)
