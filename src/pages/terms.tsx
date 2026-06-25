@@ -77,8 +77,8 @@ export default function Terms() {
               payment methods processed through our third-party payment provider.
             </p>
             <p>
-              Credits are non-transferable and have no cash value outside the Service. Time-based
-              plans (weekly, monthly, annual) expire on the date indicated at purchase.
+              Credits are non-transferable and have no cash value outside the Service. Purchased
+              credits do not expire and remain available in your account until used.
             </p>
           </section>
 

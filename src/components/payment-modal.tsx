@@ -11,9 +11,9 @@ interface PaymentModalProps {
 }
 
 const PLANS = [
-  { key: "weekly",  label: "50 extractions",     sats: 3000,  desc: "7 days" },
-  { key: "monthly", label: "200 extractions",    sats: 9900,  desc: "30 days", popular: true },
-  { key: "annual",  label: "2,400 extractions",  sats: 79000, desc: "365 days" },
+  { key: "pack50",   label: "50 extractions",     sats: 3000,  desc: "60 sats each" },
+  { key: "pack200",  label: "200 extractions",    sats: 9900,  desc: "50 sats each", popular: true },
+  { key: "pack2400", label: "2,400 extractions",  sats: 79000, desc: "33 sats each" },
 ];
 
 type Step = "select" | "invoice" | "paid";
@@ -118,7 +118,7 @@ export function PaymentModal({ pubkey, fileCount, onClose, onPaid }: PaymentModa
                 <Zap className="h-5 w-5 text-yellow-500" />
                 Purchase Credits
               </h3>
-              <p className="text-sm text-muted-foreground">Pay with Bitcoin Lightning. Instant activation.</p>
+              <p className="text-sm text-muted-foreground">Pay with Bitcoin Lightning. Credits never expire.</p>
             </div>
 
             {/* Per-file payment (when triggered from generate button) */}

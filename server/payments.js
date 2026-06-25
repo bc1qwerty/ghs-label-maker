@@ -2,11 +2,20 @@
 // index.js for unit testing. settlePayment is the only writer of paid
 // status + credits and is transactional + idempotent.
 
+// Count-based credit packs. No `days` field → credits never expire; you pay
+// once for a number of extractions and keep them until used.
 export const PLANS = {
-  single:  { sats: 100,   credits: 1,    label: "1 extraction" },
-  weekly:  { sats: 3000,  credits: 50,   label: "Weekly (50)", days: 7 },
-  monthly: { sats: 9900,  credits: 200,  label: "Monthly (200)", days: 30 },
-  annual:  { sats: 79000, credits: 2400, label: "Annual (2400)", days: 365 },
+  single:   { sats: 100,   credits: 1,    label: "1 extraction" },
+  pack50:   { sats: 3000,  credits: 50,   label: "50 extractions" },
+  pack200:  { sats: 9900,  credits: 200,  label: "200 extractions" },
+  pack2400: { sats: 79000, credits: 2400, label: "2,400 extractions" },
+
+  // Deprecated time-based keys, kept only so a Lightning invoice created
+  // before the count-based migration still settles for in-flight payers.
+  // No `days` → these also grant non-expiring credits now.
+  weekly:  { sats: 3000,  credits: 50,   label: "50 extractions" },
+  monthly: { sats: 9900,  credits: 200,  label: "200 extractions" },
+  annual:  { sats: 79000, credits: 2400, label: "2,400 extractions" },
 };
 
 // Per-file pricing with volume discounts (tiers up to 30 files — the

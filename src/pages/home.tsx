@@ -373,11 +373,11 @@ export default function Home() {
                     <div className="flex justify-between"><span className="text-muted-foreground">Free trial</span><span className="font-semibold text-emerald-600">3 extractions</span></div>
                     <div className="border-t my-1"></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">Per use</span><span className="font-medium">100 sats</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Weekly (50)</span><span className="font-medium">3,000 sats</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Monthly (200)</span><span className="font-medium text-primary">9,900 sats</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Annual (2,400)</span><span className="font-medium">79,000 sats</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">50 extractions</span><span className="font-medium">3,000 sats</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">200 extractions</span><span className="font-medium text-primary">9,900 sats</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">2,400 extractions</span><span className="font-medium">79,000 sats</span></div>
                   </div>
-                  <p className="text-[10px] text-muted-foreground">Pay with Bitcoin Lightning. Instant activation.</p>
+                  <p className="text-[10px] text-muted-foreground">Pay with Bitcoin Lightning. Credits never expire.</p>
                 </div>
 
                 {!userPubkey && (

@@ -45,14 +45,14 @@ test("settlePayment: completePayment flips only pending rows (race guard at SQL 
   assert.equal(stmts.completePayment.run("h2").changes, 0);
 });
 
-test("settlePayment: plan purchase sets plan name and expiry", () => {
+test("settlePayment: count-based pack sets plan name and never expires", () => {
   const { db, stmts } = freshDb();
-  const payment = seedPayment(stmts, { plan: "weekly", hash: "h3" });
+  const payment = seedPayment(stmts, { plan: "pack200", hash: "h3" });
   const r = settlePayment(db, stmts, PLANS, payment);
-  assert.equal(r.credits, 50);
+  assert.equal(r.credits, 200);
   const c = stmts.getCredits.get("pk1");
-  assert.equal(c.plan, "weekly");
-  assert.ok(c.plan_expires_at > Math.floor(Date.now() / 1000));
+  assert.equal(c.plan, "pack200");
+  assert.equal(c.plan_expires_at, 0, "count-based packs must not set an expiry");
 });
 
 test("settlePayment: batch bought on plan='free' row lands on 'payg' (no infinite credits)", () => {
