@@ -44,14 +44,12 @@ export function settlePayment(db, stmts, plans, payment) {
     if (flipped.changes !== 1) return null;
 
     const pubkey = payment.pubkey;
-    const now = Math.floor(Date.now() / 1000);
     const existing = stmts.getCredits.get(pubkey);
     const currentAmount = existing ? existing.amount : 0;
 
-    let creditsToAdd, expiresAt, planName;
+    let creditsToAdd, planName;
     if (payment.plan.startsWith("batch-")) {
       creditsToAdd = parseInt(payment.plan.split("-")[1], 10) || 1;
-      expiresAt = existing?.plan_expires_at || 0;
       // Purchased credits must never sit under plan='free' — recordUsage
       // only deducts non-free plans, so 'free' meant infinite credits when
       // a batch was bought after a plan-expiry reset.
@@ -60,14 +58,15 @@ export function settlePayment(db, stmts, plans, payment) {
       const plan = plans[payment.plan];
       if (!plan) return { credits: currentAmount, plan: payment.plan };
       creditsToAdd = plan.credits;
-      expiresAt = plan.days ? now + plan.days * 86400 : 0;
       planName = payment.plan;
     }
 
     const newAmount = currentAmount + creditsToAdd;
+    // plan_expires_at is written as 0 unconditionally: credits do not expire.
+    // The column stays for schema compatibility with the deployed DB.
     stmts.upsertCredits.run(
-      pubkey, newAmount, planName, expiresAt,
-      newAmount, planName, expiresAt,
+      pubkey, newAmount, planName, 0,
+      newAmount, planName, 0,
     );
     return { credits: newAmount, plan: payment.plan };
   });

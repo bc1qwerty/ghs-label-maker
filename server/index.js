@@ -2,12 +2,12 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import { createRequire } from "module";
-import Anthropic from "@anthropic-ai/sdk";
 import path from "path";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
 import { createDb } from "./db.js";
 import { PLANS, BATCH_MAX_FILES, calcBatchPrice, settlePayment, recordUsage as recordUsageImpl } from "./payments.js";
+import { complete, extractJson, llmStats } from "./llm.js";
 
 // Load .env from the working directory (node 22+ builtin). The VPS pm2
 // process used to depend on env vars captured at first `pm2 start` — a
@@ -35,8 +35,6 @@ const PHOENIXD_PASSWORD = process.env.PHOENIXD_PASSWORD || "";
 const _require = createRequire(import.meta.url);
 const pdfParse = _require("pdf-parse");
 
-// ─── Anthropic client ───
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // Concurrency limiter for AI calls
 const MAX_CONCURRENT_AI = 3;
@@ -117,16 +115,15 @@ async function checkUsage(req, res, next) {
     // Logged-in user: check credits or free tier
     const credits = stmts.getCredits.get(pubkey);
 
-    if (credits) {
-      // Has a plan — check if active
-      const now = Math.floor(Date.now() / 1000);
-      if (credits.plan !== "free" && credits.plan_expires_at > 0 && credits.plan_expires_at < now) {
-        // Plan expired, reset to free
-        stmts.upsertCredits.run(pubkey, 0, "free", 0, 0, "free", 0);
-      } else if (credits.amount >= fileCount) {
-        req.authInfo = { pubkey, type: "paid", remaining: credits.amount - fileCount };
-        return next();
-      }
+    // Credits never expire. 44587c9 moved purchases to count-based packs but
+    // left this middleware resetting any row whose plan_expires_at had passed,
+    // so a pre-migration buyer would lose their remaining credits the next time
+    // they uploaded. One live account was sitting on 193 credits with an expiry
+    // of 2026-05-10 — already past, and armed to wipe on their next request.
+    // You pay for a number of extractions and keep them until used.
+    if (credits && credits.amount >= fileCount) {
+      req.authInfo = { pubkey, type: "paid", remaining: credits.amount - fileCount };
+      return next();
     }
 
     // Check free tier
@@ -425,20 +422,14 @@ Rules:
 
   await acquireAiSlot();
   try {
-    const message = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 2048,
-      messages: [{ role: "user", content: `${systemPrompt}\n\nMSDS text:\n${pdfText.substring(0, 15000)}` }],
-    });
-
-    const rawContent = message.content[0]?.type === "text" ? message.content[0].text : "";
+    const rawContent = await complete(
+      `${systemPrompt}\n\nMSDS text:\n${pdfText.substring(0, 15000)}`,
+      2048,
+    );
     if (!rawContent) return { success: false, error: "AI returned empty response" };
 
-    const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { success: false, error: "Failed to parse AI response" };
-
-    let ghsData;
-    try { ghsData = JSON.parse(jsonMatch[0]); } catch { return { success: false, error: "Failed to parse AI response" }; }
+    const ghsData = extractJson(rawContent);
+    if (!ghsData) return { success: false, error: "Failed to parse AI response" };
 
     if (!ghsData.productName || !ghsData.signalWord) return { success: false, error: "Incomplete GHS information" };
 
@@ -522,20 +513,14 @@ Rules:
 
   await acquireAiSlot();
   try {
-    const message = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
-      messages: [{ role: "user", content: `${systemPrompt}\n\nMSDS text:\n${pdfText.substring(0, 15000)}` }],
-    });
-
-    const rawContent = message.content[0]?.type === "text" ? message.content[0].text : "";
+    const rawContent = await complete(
+      `${systemPrompt}\n\nMSDS text:\n${pdfText.substring(0, 15000)}`,
+      1024,
+    );
     if (!rawContent) return { success: false, error: "AI returned empty response" };
 
-    const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { success: false, error: "Failed to parse AI response" };
-
-    let data;
-    try { data = JSON.parse(jsonMatch[0]); } catch { return { success: false, error: "Failed to parse AI response" }; }
+    const data = extractJson(rawContent);
+    if (!data) return { success: false, error: "Failed to parse AI response" };
 
     return {
       success: true,
@@ -706,17 +691,13 @@ async function extractWithPrompt(buffer, language, filename, systemPrompt, logTa
   }
   await acquireAiSlot();
   try {
-    const message = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 4096,
-      messages: [{ role: "user", content: `${systemPrompt}\n\nDocument text:\n${pdfText.substring(0, 15000)}` }],
-    });
-    const rawContent = message.content[0]?.type === "text" ? message.content[0].text : "";
+    const rawContent = await complete(
+      `${systemPrompt}\n\nDocument text:\n${pdfText.substring(0, 15000)}`,
+      4096,
+    );
     if (!rawContent) return { success: false, error: "AI returned empty response" };
-    const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { success: false, error: "Failed to parse AI response" };
-    let data;
-    try { data = JSON.parse(jsonMatch[0]); } catch { return { success: false, error: "Failed to parse AI response" }; }
+    const data = extractJson(rawContent);
+    if (!data) return { success: false, error: "Failed to parse AI response" };
     return { success: true, data };
   } catch (err) {
     console.error(`[${logTag}] API error for ${filename}:`, err.message);
@@ -867,7 +848,10 @@ Rules:
 batchRoute("/api/un383/extract-batch", un383Prompt, "UN383", "un383");
 
 // Health
-app.get("/api/health", (_req, res) => res.json({ status: "ok", service: "ghs-label-maker" }));
+// llm 카운터를 같이 낸다. 추출이 로컬에서 도는지 유료 폴백으로 새고 있는지는
+// 응답만 봐서는 구분이 안 된다 — 둘 다 정상적인 JSON 을 돌려주기 때문이다.
+// 이게 없으면 "로컬로 바꿨다"는 기억만 남고 실제로는 계속 과금될 수 있다.
+app.get("/api/health", (_req, res) => res.json({ status: "ok", service: "ghs-label-maker", llm: llmStats }));
 
 // Plans info
 app.get("/api/plans", (_req, res) => res.json(PLANS));

@@ -71,17 +71,35 @@ test("settlePayment: batch bought on plan='free' row lands on 'payg' (no infinit
   assert.equal(stmts.getCredits.get("pk1").amount, 3);
 });
 
-test("settlePayment: batch on an active paid plan keeps that plan + its expiry", () => {
+test("settlePayment: batch on a paid plan keeps the plan and clears any legacy expiry", () => {
   const { db, stmts } = freshDb();
-  const exp = Math.floor(Date.now() / 1000) + 86400;
-  stmts.upsertCredits.run("pk1", 10, "monthly", exp, 10, "monthly", exp);
+  // A row left over from the time-based era: still carries an expiry.
+  const legacyExp = Math.floor(Date.now() / 1000) + 86400;
+  stmts.upsertCredits.run("pk1", 10, "monthly", legacyExp, 10, "monthly", legacyExp);
   const payment = seedPayment(stmts, { plan: "batch-10", hash: "h5", sats: 700 });
 
   const r = settlePayment(db, stmts, PLANS, payment);
   assert.equal(r.credits, 20);
   const c = stmts.getCredits.get("pk1");
-  assert.equal(c.plan, "monthly");
-  assert.equal(c.plan_expires_at, exp);
+  assert.equal(c.plan, "monthly", "plan name is preserved");
+  assert.equal(c.plan_expires_at, 0, "settlement must clear the legacy expiry, not carry it forward");
+});
+
+test("settlePayment: a legacy expiry already in the past never costs the buyer credits", () => {
+  // The live regression this replaced: one account held 193 credits with an
+  // expiry of 2026-05-10. Under the old middleware their next upload reset the
+  // row to plan='free', amount=0. Settlement and usage must both leave it alone.
+  const { db, stmts } = freshDb();
+  const pastExp = Math.floor(Date.now() / 1000) - 86400 * 100;
+  stmts.upsertCredits.run("pk1", 193, "monthly", pastExp, 193, "monthly", pastExp);
+
+  recordUsage(db, stmts, "pk1", "1.2.3.4", 3);
+  assert.equal(stmts.getCredits.get("pk1").amount, 190, "usage deducts normally, no reset");
+
+  const payment = seedPayment(stmts, { plan: "pack50", hash: "h6", sats: 3000 });
+  const r = settlePayment(db, stmts, PLANS, payment);
+  assert.equal(r.credits, 240, "top-up adds to the surviving balance");
+  assert.equal(stmts.getCredits.get("pk1").plan_expires_at, 0);
 });
 
 test("recordUsage: free plan counts usage but never deducts", () => {

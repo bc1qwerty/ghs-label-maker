@@ -612,17 +612,14 @@ export default function Home() {
                         <p className="text-[10px] text-muted-foreground">Used</p>
                       </div>
                     </div>
-                    {userInfo.plan !== "free" && userInfo.planExpiresAt > 0 && (
-                      <>
-                        <div className="flex justify-between text-[11px]">
-                          <span className="text-muted-foreground">Plan</span>
-                          <span className="font-medium capitalize">{userInfo.plan}</span>
-                        </div>
-                        <div className="flex justify-between text-[11px]">
-                          <span className="text-muted-foreground">Expires</span>
-                          <span className="font-medium">{new Date(userInfo.planExpiresAt * 1000).toLocaleDateString()}</span>
-                        </div>
-                      </>
+                    {/* Credits never expire, so there is no "Expires" row —
+                        say so instead, since a balance with no stated end date
+                        otherwise reads as an oversight. */}
+                    {userInfo.plan !== "free" && (
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-muted-foreground">Credits</span>
+                        <span className="font-medium">No expiry</span>
+                      </div>
                     )}
                     <Button size="sm" variant="outline" className="w-full text-xs h-7" onClick={() => setNeedsPayment(true)}>
                       Buy More Credits
