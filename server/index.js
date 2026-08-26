@@ -856,9 +856,14 @@ app.get("/api/health", (_req, res) => res.json({ status: "ok", service: "ghs-lab
 // Plans info
 app.get("/api/plans", (_req, res) => res.json(PLANS));
 
-// SPA fallback
+// 없는 경로 fallback.
+// ⚠ 200 이 아니라 404 로 준다. 이 앱은 클라이언트 라우팅이 없어서 실제 페이지(/,
+// /index.html, /og-generator.html)는 위의 express.static 이 먼저 처리한다 — 여기까지
+// 온 경로는 존재하지 않는 것이다. 200 을 주면 검색엔진이 오타 URL 을 정상 페이지로
+// 색인하고 링크 검사도 깨진 링크를 못 잡는다(soft-404).
+// 화면은 그대로 앱 셸을 보여주되 상태 코드만 진실을 말하게 한다.
 app.get("/{*splat}", (_req, res) => {
-  res.sendFile(path.join(__dirname, "../dist/index.html"));
+  res.status(404).sendFile(path.join(__dirname, "../dist/index.html"));
 });
 
 app.listen(PORT, () => console.log(`[GHS] Server running on port ${PORT}`));
