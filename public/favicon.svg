@@ -1,5 +1,7 @@
-<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <polygon points="16,1.5 31,29 1,29" fill="#FACC15" stroke="#CA8A04" stroke-width="1.5" stroke-linejoin="round"/>
-  <rect x="14.2" y="10" width="3.6" height="10" rx="1.8" fill="#1a1a1a"/>
-  <circle cx="16" cy="24" r="2.2" fill="#1a1a1a"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs><clipPath id="r"><rect width="512" height="512" rx="55"/></clipPath></defs>
+  <g clip-path="url(#r)">
+    <rect y="0" width="512" height="256" fill="#f7931a"/>
+    <rect y="256" width="512" height="256" fill="#09090b"/>
+  </g>
 </svg>
