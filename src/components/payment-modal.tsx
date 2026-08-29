@@ -35,9 +35,19 @@ export function PaymentModal({ pubkey, fileCount, onClose, onPaid }: PaymentModa
 
   React.useEffect(() => {
     if (fileCount && fileCount > 0) {
+      // This endpoint sits under the payment rate limit (10/min) and answers a
+      // 429 with a JSON body of its own. fetch does not treat that as an error,
+      // so the error object was being stored as the price: it is truthy, so it
+      // passed the `batchPrice &&` render guard, and then `total` was undefined
+      // and `.toLocaleString()` threw — taking the payment modal down at the
+      // moment of payment. Every other fetch in this codebase checks res.ok.
       fetch(`/api/payment/price/${fileCount}`)
-        .then(r => r.json())
-        .then(data => setBatchPrice(data))
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => {
+          if (data && typeof data.total === "number" && typeof data.perFile === "number") {
+            setBatchPrice(data);
+          }
+        })
         .catch(() => {});
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };

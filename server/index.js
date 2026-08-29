@@ -210,7 +210,15 @@ app.use("/api/transport", apiRateLimit);
 app.use("/api/dgd", apiRateLimit);
 app.use("/api/sds", apiRateLimit);
 app.use("/api/un383", apiRateLimit);
-app.use("/api/payment", paymentRateLimit);
+app.use("/api/payment", (req, res, next) => {
+  // The price lookup is pure arithmetic — no invoice, no phoenixd call, no DB —
+  // but the prefix mount put it under the payment limiter, which exists to
+  // throttle invoice creation. The UI refetches the price on every file-count
+  // change, so a handful of adjustments burned that budget and the endpoint
+  // started answering 429 in the middle of the payment flow.
+  if (req.path.startsWith("/price/")) return apiRateLimit(req, res, next);
+  return paymentRateLimit(req, res, next);
+});
 
 // ─── Lightning payments ───
 function phoenixdAuth() {
