@@ -12,6 +12,9 @@ set -euo pipefail
 
 VPS="${VPS_HOST:-vps}"
 SRC="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC2088  # 여기서는 확장되면 안 된다 — rsync 의 `호스트:경로` 와
+#   `ssh "cd $DEST"` 는 **원격 셸이** 물결표를 푼다. 로컬에서 $HOME 으로 풀면
+#   맥의 경로가 원격에 박혀 배포가 엉뚱한 데로 간다(2026-08-30 확인).
 DEST="~/ghs-label-maker"
 
 echo "==> Tests"
