@@ -508,10 +508,14 @@ export default function Home() {
 
                 {/* Language Selection */}
                 <div className="space-y-3">
-                  <Label className="text-sm font-medium">
+                  {/* ⚠ Label 이 있어도 htmlFor 로 select 와 묶이지 않으면 스크린리더가 이 컨트롤의
+                      이름을 읽지 못한다(axe `select-name`, WCAG 4.1.2). 2026-08-30 a11y 전수에서
+                      발견. 시각 변화는 없다. */}
+                  <Label htmlFor="output-language" className="text-sm font-medium">
                     Output Language
                   </Label>
                   <select
+                    id="output-language"
                     value={language}
                     onChange={(e) => setLanguage(e.target.value)}
                     className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
