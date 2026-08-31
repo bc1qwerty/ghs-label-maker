@@ -246,6 +246,7 @@ app.post("/api/payment/create-batch", express.json(), async (req, res) => {
       method: "POST",
       headers: { Authorization: phoenixdAuth(), "Content-Type": "application/x-www-form-urlencoded" },
       body: `amountSat=${price.total}&description=${encodeURIComponent(`GHS Label: ${fileCount} file${fileCount > 1 ? "s" : ""}${price.discount ? ` (${price.discount}% off)` : ""}`)}`,
+      signal: AbortSignal.timeout(10000),
     });
     if (!resp.ok) throw new Error("phoenixd error: " + resp.status);
     const data = await resp.json();
@@ -283,6 +284,7 @@ app.post("/api/payment/create", express.json(), async (req, res) => {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: `amountSat=${sats}&description=${encodeURIComponent(`GHS Label: ${label}`)}`,
+      signal: AbortSignal.timeout(10000),
     });
 
     if (!resp.ok) throw new Error("phoenixd error: " + resp.status);
