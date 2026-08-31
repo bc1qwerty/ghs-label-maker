@@ -6,7 +6,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
 import { createDb } from "./db.js";
-import { PLANS, BATCH_MAX_FILES, calcBatchPrice, settlePayment, recordUsage as recordUsageImpl } from "./payments.js";
+import { PLANS, BATCH_MAX_FILES, calcBatchPrice, settlePayment, recordUsage as recordUsageImpl, reserveCredits as reserveCreditsImpl, settlePaidUsage as settlePaidUsageImpl } from "./payments.js";
 import { complete, extractJson, llmStats } from "./llm.js";
 
 // Load .env from the working directory (node 22+ builtin). The VPS pm2
@@ -106,36 +106,51 @@ function getClientIp(req) {
 }
 
 // ─── Auth & Usage check middleware ───
+// 통과시킨 요청의 사용량을 응답 종료 시점에 딱 한 번 정산한다. 핸들러는
+// req._usageCount(성공 추출 수)만 세팅하면 된다 — 미설정이면 0으로 보고,
+// 결제 예약분은 전액 환급된다(검증 실패·에러·클라 끊김 어느 경로든 안전).
+// finish/close 를 둘 다 듣되 가드로 한 번만 정산한다.
+function admitUsage(req, res, next, ip, authInfo) {
+  req.authInfo = authInfo;
+  let settled = false;
+  const doSettle = () => {
+    if (settled) return;
+    settled = true;
+    const success = req._usageCount || 0;
+    if (authInfo.type === "paid") {
+      settlePaidUsageImpl(db, stmts, authInfo.pubkey, ip, authInfo.reserved, success);
+    } else {
+      recordUsageImpl(db, stmts, authInfo.pubkey, ip, success);
+    }
+  };
+  res.on("finish", doSettle);
+  res.on("close", doSettle);
+  return next();
+}
+
 async function checkUsage(req, res, next) {
   const pubkey = await getUserPubkey(req);
   const ip = getClientIp(req);
   const fileCount = Array.isArray(req.files) ? req.files.length : (req.file ? 1 : 0);
 
   if (pubkey) {
-    // Logged-in user: check credits or free tier
-    const credits = stmts.getCredits.get(pubkey);
-
-    // Credits never expire. 44587c9 moved purchases to count-based packs but
-    // left this middleware resetting any row whose plan_expires_at had passed,
-    // so a pre-migration buyer would lose their remaining credits the next time
-    // they uploaded. One live account was sitting on 193 credits with an expiry
-    // of 2026-05-10 — already past, and armed to wipe on their next request.
-    // You pay for a number of extractions and keep them until used.
-    if (credits && credits.amount >= fileCount) {
-      req.authInfo = { pubkey, type: "paid", remaining: credits.amount - fileCount };
-      return next();
+    // 유료: 원자적으로 예약(amount >= fileCount 일 때만 한 번에 차감). 동시
+    // 요청이 모두 checkUsage 를 지나쳐 1크레딧으로 N회 추출하던 TOCTOU 를 닫는다
+    // (2026-08-31 감사). 크레딧은 만료되지 않으므로 잔액 리셋은 하지 않는다.
+    // 추출 실패분은 응답 정산에서 환급된다.
+    if (fileCount > 0 && reserveCreditsImpl(db, stmts, pubkey, fileCount)) {
+      return admitUsage(req, res, next, ip, { pubkey, type: "paid", reserved: fileCount });
     }
 
-    // Check free tier
+    // 무료 체험(로그인): 카운트 기반. 무료는 돈이 안 걸려 예약 없이 둔다.
     const { cnt } = stmts.countByPubkey.get(pubkey);
     if (cnt + fileCount <= FREE_LIMIT) {
-      req.authInfo = { pubkey, type: "free", remaining: FREE_LIMIT - cnt - fileCount };
-      return next();
+      return admitUsage(req, res, next, ip, { pubkey, type: "free", remaining: FREE_LIMIT - cnt - fileCount });
     }
 
     return res.status(402).json({
       error: "Usage limit reached",
-      message: pubkey ? "Free trial exhausted. Purchase credits to continue." : "Please login first.",
+      message: "Free trial exhausted. Purchase credits to continue.",
       needsPayment: true,
       plans: PLANS,
     });
@@ -144,8 +159,7 @@ async function checkUsage(req, res, next) {
   // Anonymous: check by IP
   const { cnt } = stmts.countByIp.get(ip);
   if (cnt + fileCount <= FREE_LIMIT) {
-    req.authInfo = { pubkey: null, ip, type: "anonymous", remaining: FREE_LIMIT - cnt - fileCount };
-    return next();
+    return admitUsage(req, res, next, ip, { pubkey: null, ip, type: "anonymous", remaining: FREE_LIMIT - cnt - fileCount });
   }
 
   return res.status(402).json({
@@ -157,10 +171,6 @@ async function checkUsage(req, res, next) {
   });
 }
 
-// Record usage after successful extraction
-function recordUsage(pubkey, ip, count) {
-  recordUsageImpl(db, stmts, pubkey, ip, count);
-}
 
 // ─── Rate Limiting (in-memory, per IP) ───
 const rateLimitStore = new Map();
@@ -580,7 +590,7 @@ app.post("/api/ghs/extract", upload.single("file"), checkUsage, async (req, res)
   const result = await extractGhsFromBuffer(file.buffer, language, filename);
   if (!result.success) return res.status(400).json({ error: result.error });
 
-  recordUsage(req.authInfo.pubkey, getClientIp(req), 1);
+  req._usageCount = 1;
   res.json(result.data);
 });
 
@@ -604,7 +614,7 @@ app.post("/api/ghs/extract-batch", upload.array("files", 10), checkUsage, async 
   );
 
   const successCount = results.filter(r => r.status === "success").length;
-  recordUsage(req.authInfo.pubkey, getClientIp(req), successCount);
+  req._usageCount = successCount;
   // Save to history
   if (req.authInfo.pubkey) {
     for (const r of results) {
@@ -628,7 +638,7 @@ app.post("/api/transport/extract", upload.single("file"), checkUsage, async (req
   const result = await extractTransportFromBuffer(file.buffer, language, filename);
   if (!result.success) return res.status(400).json({ error: result.error });
 
-  recordUsage(req.authInfo.pubkey, getClientIp(req), 1);
+  req._usageCount = 1;
   res.json(result.data);
 });
 
@@ -652,7 +662,7 @@ app.post("/api/transport/extract-batch", upload.array("files", 10), checkUsage, 
   );
 
   const successCount = results.filter(r => r.status === "success").length;
-  recordUsage(req.authInfo.pubkey, getClientIp(req), successCount);
+  req._usageCount = successCount;
   if (req.authInfo.pubkey) {
     for (const r of results) {
       if (r.status === "success" && r.data) {
@@ -731,7 +741,7 @@ function batchRoute(path, promptFn, logTag, mode) {
         : { filename, status: "error", data: undefined, error: result.error };
     }));
     const successCount = results.filter(r => r.status === "success").length;
-    recordUsage(req.authInfo.pubkey, getClientIp(req), successCount);
+    req._usageCount = successCount;
     if (req.authInfo.pubkey) {
       for (const r of results) {
         if (r.status === "success" && r.data) {

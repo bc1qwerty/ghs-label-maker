@@ -93,3 +93,27 @@ export function recordUsage(db, stmts, pubkey, ip, count) {
   });
   record();
 }
+
+/**
+ * Atomically reserve `n` paid credits at admission — before the long async
+ * extraction — so concurrent requests can't all pass checkUsage and consume
+ * a single credit for N extractions (TOCTOU, 2026-08-31 감사). Returns true
+ * only when the balance covered it (changes===1). Free packs are excluded.
+ */
+export function reserveCredits(db, stmts, pubkey, n) {
+  return stmts.reserveCredits.run(n, pubkey, n).changes === 1;
+}
+
+/**
+ * Settle a reserved paid request after extraction: record `success` usage rows
+ * and refund the reserved-but-unused credits (reserved - success). Idempotent
+ * per call; runs in one transaction.
+ */
+export function settlePaidUsage(db, stmts, pubkey, ip, reserved, success) {
+  const settle = db.transaction(() => {
+    for (let i = 0; i < success; i++) stmts.recordUsage.run(pubkey, ip);
+    const refund = reserved - success;
+    if (refund > 0) stmts.refundCredits.run(refund, pubkey);
+  });
+  settle();
+}

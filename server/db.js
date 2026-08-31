@@ -50,6 +50,12 @@ export function createDb(dbPath) {
       ON CONFLICT(pubkey) DO UPDATE SET amount=?, plan=?, plan_expires_at=?
     `),
     deductCredit: db.prepare("UPDATE credits SET amount = amount - 1 WHERE pubkey = ? AND amount > 0"),
+    // 원자적 예약: 잔액이 충분할 때만(amount >= n) 한 번에 차감한다. changes===1
+    // 이어야 통과 — 동시 요청이 모두 checkUsage 를 지나쳐 1크레딧으로 N회
+    // 추출하던 TOCTOU 를 닫는다(2026-08-31 감사). 무료 팩(plan='free')은 제외.
+    reserveCredits: db.prepare("UPDATE credits SET amount = amount - ? WHERE pubkey = ? AND amount >= ? AND plan != 'free'"),
+    // 추출 실패분(예약했으나 못 쓴 크레딧) 환급.
+    refundCredits: db.prepare("UPDATE credits SET amount = amount + ? WHERE pubkey = ?"),
     createPayment: db.prepare("INSERT INTO payments (pubkey, payment_hash, amount_sats, plan) VALUES (?, ?, ?, ?)"),
     getPayment: db.prepare("SELECT * FROM payments WHERE payment_hash = ?"),
     // Conditional flip: only one caller can ever transition pending → paid.

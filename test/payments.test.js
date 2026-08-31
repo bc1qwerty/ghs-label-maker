@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDb } from "../server/db.js";
-import { PLANS, calcBatchPrice, settlePayment, recordUsage } from "../server/payments.js";
+import { PLANS, calcBatchPrice, settlePayment, recordUsage, reserveCredits, settlePaidUsage } from "../server/payments.js";
 
 // Payment/credit core paths against an in-memory DB with the exact
 // production schema + statements. No network, no Lightning.
@@ -115,4 +115,52 @@ test("recordUsage: deduction never goes below zero", () => {
   stmts.upsertCredits.run("pk1", 1, "payg", 0, 1, "payg", 0);
   recordUsage(db, stmts, "pk1", "1.2.3.4", 3);
   assert.equal(stmts.getCredits.get("pk1").amount, 0);
+});
+
+// ─── TOCTOU 결제 예약(2026-08-31 감사) ───
+function seedCredits(stmts, pubkey, amount, plan = "single") {
+  stmts.upsertCredits.run(pubkey, amount, plan, 0, amount, plan, 0);
+}
+
+test("reserveCredits: 원자적 — 잔액이 n 이상일 때만 성공하며 그만큼 차감", () => {
+  const { db, stmts } = freshDb();
+  seedCredits(stmts, "pk1", 3, "single");
+  assert.equal(reserveCredits(db, stmts, "pk1", 2), true);
+  assert.equal(stmts.getCredits.get("pk1").amount, 1);
+  assert.equal(reserveCredits(db, stmts, "pk1", 2), false); // 부족
+  assert.equal(stmts.getCredits.get("pk1").amount, 1);       // 변화 없음
+});
+
+test("reserveCredits: race 종료 — 1크레딧에 예약 두 번, 하나만 성공", () => {
+  const { db, stmts } = freshDb();
+  seedCredits(stmts, "pk1", 1, "single");
+  const a = reserveCredits(db, stmts, "pk1", 1);
+  const b = reserveCredits(db, stmts, "pk1", 1);
+  assert.equal([a, b].filter(Boolean).length, 1);
+  assert.equal(stmts.getCredits.get("pk1").amount, 0);
+});
+
+test("reserveCredits: 무료 팩(plan=free)은 예약 대상 아님", () => {
+  const { db, stmts } = freshDb();
+  seedCredits(stmts, "pk1", 5, "free");
+  assert.equal(reserveCredits(db, stmts, "pk1", 1), false);
+  assert.equal(stmts.getCredits.get("pk1").amount, 5);
+});
+
+test("settlePaidUsage: 성공분 기록 + 미사용 예약분 환급", () => {
+  const { db, stmts } = freshDb();
+  seedCredits(stmts, "pk1", 5, "single");
+  reserveCredits(db, stmts, "pk1", 3);               // 5 → 2
+  settlePaidUsage(db, stmts, "pk1", "1.2.3.4", 3, 2); // 2건만 성공 → 1 환급
+  assert.equal(stmts.getCredits.get("pk1").amount, 3);
+  assert.equal(stmts.countByPubkey.get("pk1").cnt, 2);
+});
+
+test("settlePaidUsage: 전량 실패면 예약 전액 환급", () => {
+  const { db, stmts } = freshDb();
+  seedCredits(stmts, "pk1", 2, "single");
+  reserveCredits(db, stmts, "pk1", 2);                // 2 → 0
+  settlePaidUsage(db, stmts, "pk1", "1.2.3.4", 2, 0); // 전액 환급
+  assert.equal(stmts.getCredits.get("pk1").amount, 2);
+  assert.equal(stmts.countByPubkey.get("pk1").cnt, 0);
 });
