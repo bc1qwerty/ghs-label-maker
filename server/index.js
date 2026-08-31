@@ -102,7 +102,18 @@ async function getUserPubkey(req) {
 }
 
 function getClientIp(req) {
-  return req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || "";
+  // ⚠ XFF 첫 엔트리는 클라가 위조할 수 있다(Caddy 는 실제 peer 를 뒤에 append).
+  //   위조 IP 로 무료한도·rate-limit·정산이 전부 우회되던 것을 막는다(2026-08-31 감사).
+  //   신뢰 프록시(Caddy, 현재 단일 홉)가 붙인 마지막 엔트리가 진짜 client 다.
+  //   앞단에 CF 를 두게 되면 CF-Connecting-IP 가 우선한다(현재는 부재).
+  const cf = req.headers["cf-connecting-ip"];
+  if (typeof cf === "string" && cf.trim()) return cf.trim();
+  const xff = req.headers["x-forwarded-for"];
+  if (typeof xff === "string") {
+    const parts = xff.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length) return parts[parts.length - 1];
+  }
+  return req.ip || (req.socket && req.socket.remoteAddress) || "";
 }
 
 // ─── Auth & Usage check middleware ───
