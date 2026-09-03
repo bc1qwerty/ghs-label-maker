@@ -56,7 +56,21 @@ export function settlePayment(db, stmts, plans, payment) {
       planName = existing && existing.plan !== "free" ? existing.plan : "payg";
     } else {
       const plan = plans[payment.plan];
-      if (!plan) return { credits: currentAmount, plan: payment.plan };
+      if (!plan) {
+        // ⚠ 여기 오면 **사용자는 돈을 냈는데 크레딧이 0**이다. completePayment 는
+        // 위에서 이미 pending → paid 로 넘겼고, return 은 예외가 아니라서
+        // 트랜잭션이 그대로 커밋된다 — 즉 손실이 조용히 굳는다.
+        // 도달 경로는 하나뿐이다: 인보이스 생성 시점엔 PLANS 에 있던 키를
+        // 나중에 배포로 지우고, 그 사이 만들어진 pending 인보이스가 결제되는 것.
+        // (생성 시 `if (!PLANS[plan]) return 400` 검증이 있어 그 외에는 못 온다.)
+        // 그래서 옛 time-based 키를 위에 남겨 뒀다. 지울 때는 pending 인보이스가
+        // 없는지 먼저 확인할 것.
+        console.error(
+          `[GHS] settlePayment: 알 수 없는 plan '${payment.plan}' — 결제는 paid 로 ` +
+          `기록됐으나 크레딧을 못 줬다. pubkey=${pubkey} hash=${payment.payment_hash}`,
+        );
+        return { credits: currentAmount, plan: payment.plan };
+      }
       creditsToAdd = plan.credits;
       planName = payment.plan;
     }

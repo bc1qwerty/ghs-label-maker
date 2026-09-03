@@ -164,3 +164,44 @@ test("settlePaidUsage: 전량 실패면 예약 전액 환급", () => {
   assert.equal(stmts.getCredits.get("pk1").amount, 2);
   assert.equal(stmts.countByPubkey.get("pk1").cnt, 0);
 });
+
+// PLANS 에서 키를 지운 뒤 그 키로 만들어진 pending 인보이스가 결제되면,
+// completePayment 가 이미 paid 로 넘긴 뒤라 **돈만 받고 크레딧이 0**이 된다.
+// 이 손실 자체는 막을 수 없지만(라이트닝은 이미 수신됐다) **조용하면 안 된다** —
+// 로그가 없으면 사용자가 신고하기 전까지 아무도 모른다.
+test("settlePayment: 모르는 plan 은 크레딧 0 이지만 조용히 지나가지 않는다", () => {
+  const { db, stmts } = freshDb();
+  const payment = seedPayment(stmts, { plan: "retired-plan" });
+
+  const errs = [];
+  const realError = console.error;
+  console.error = (...a) => errs.push(a.join(" "));
+  let result;
+  try {
+    result = settlePayment(db, stmts, PLANS, payment);
+  } finally {
+    console.error = realError;
+  }
+
+  assert.equal(result.credits, 0, "모르는 plan 이라 크레딧은 늘지 않는다");
+  assert.equal(stmts.getPayment.get("h1").status, "paid", "결제는 paid 로 굳는다(트랜잭션이 커밋된다)");
+  assert.equal(errs.length, 1, "손실이 났으면 반드시 로그가 남아야 한다");
+  assert.match(errs[0], /알 수 없는 plan 'retired-plan'/);
+  assert.match(errs[0], /h1/, "어느 결제인지 hash 로 찾을 수 있어야 한다");
+});
+
+// 반대 방향: 아는 plan 은 로그를 남기지 않는다(정상 결제마다 에러가 찍히면
+// 그 로그는 곧 무시된다).
+test("settlePayment: 아는 plan 은 조용하다", () => {
+  const { db, stmts } = freshDb();
+  const payment = seedPayment(stmts, { plan: "pack50" });
+  const errs = [];
+  const realError = console.error;
+  console.error = (...a) => errs.push(a.join(" "));
+  try {
+    settlePayment(db, stmts, PLANS, payment);
+  } finally {
+    console.error = realError;
+  }
+  assert.deepEqual(errs, [], "정상 결제는 에러 로그를 남기지 않는다");
+});
