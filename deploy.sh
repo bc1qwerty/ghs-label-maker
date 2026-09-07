@@ -29,8 +29,27 @@ rsync -az --delete -e ssh "$SRC/dist/" "$VPS:$DEST/dist/"
 echo "==> Syncing server files (no .env, no DB)"
 # ⚠서버 파일은 이름을 하나하나 적는다. 새 모듈을 만들면 여기에 추가하지 않는 한
 # 배포에서 빠지고, VPS 는 import 실패로 부팅조차 못 한다.
+SERVER_FILES=(index.js db.js payments.js llm.js client-ip.js)
+
+# ⚠그 "추가하는 걸 잊는" 사고를 사람 기억에 맡기지 않는다(2026-09-07 신설).
+# server/ 에 있는데 위 목록에 없는 .js 가 있으면 배포를 멈춘다. 목록에서 빠진
+# 모듈은 조용히 안 올라가고, 그걸 import 하는 index.js 때문에 VPS 가 부팅에
+# 실패한다 — 배포가 끝난 뒤에야 사이트가 죽은 걸로 알게 된다.
+missing=()
+for f in "$SRC"/server/*.js; do
+  base=$(basename "$f")
+  found=0
+  for listed in "${SERVER_FILES[@]}"; do [ "$base" = "$listed" ] && found=1 && break; done
+  [ $found -eq 0 ] && missing+=("$base")
+done
+if [ ${#missing[@]} -gt 0 ]; then
+  echo "✗ deploy.sh 의 SERVER_FILES 에 없는 서버 모듈: ${missing[*]}" >&2
+  echo "  목록에 추가하지 않으면 VPS 가 import 실패로 뜨지 못한다." >&2
+  exit 1
+fi
+
 rsync -az -e ssh \
-  "$SRC/server/index.js" "$SRC/server/db.js" "$SRC/server/payments.js" "$SRC/server/llm.js" \
+  "${SERVER_FILES[@]/#/$SRC/server/}" \
   "$VPS:$DEST/server/"
 rsync -az -e ssh "$SRC/package.json" "$SRC/package-lock.json" "$VPS:$DEST/"
 
