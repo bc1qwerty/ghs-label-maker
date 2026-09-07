@@ -53,8 +53,19 @@ function releaseAiSlot() {
 }
 
 // ─── Middleware ───
+// ⚠ 개발용 localhost 오리진을 프로덕션 허용목록에 두지 않는다(2026-09-07 수정).
+//   credentials:true 와 함께이므로, 피해자 기기에서 도는 임의의 로컬 프로그램이
+//   그 포트를 잡으면 세션을 실은 요청을 이 API 에 보낼 수 있다. api.txid.uk 가
+//   같은 이유로 와일드카드 오리진을 걷어낸 전례가 있다(log.txid.uk 건).
+//   ⚠ NODE_ENV 로 판정하지 않는다 — VPS pm2 프로세스에는 NODE_ENV 가 아예 없어서
+//     "production 이 아니면 허용"이 곧 "언제나 허용"이 된다(pm2 describe 로 확인).
+//     기본값을 안전한 쪽에 두고 로컬에서만 명시적으로 켠다(TRUST_CF_HEADER 와 같은 방식).
+const DEV_ORIGINS = ["http://localhost:5173", "http://localhost:3100"];
+const ALLOWED_ORIGINS = ["https://ghs.txid.uk"].concat(
+  process.env.ALLOW_DEV_ORIGINS === "1" ? DEV_ORIGINS : [],
+);
 app.use(cors({
-  origin: ["https://ghs.txid.uk", "http://localhost:5173", "http://localhost:3100"],
+  origin: ALLOWED_ORIGINS,
   credentials: true,
 }));
 app.use(express.json());
