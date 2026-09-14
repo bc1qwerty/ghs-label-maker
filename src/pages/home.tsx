@@ -12,9 +12,14 @@ import { GhsLabel } from "@/components/ghs-label";
 import { TransportLabel, type TransportData } from "@/components/transport-label";
 import { DocumentView } from "@/components/document-view";
 import { PaymentModal } from "@/components/payment-modal";
+import { toast } from "@/hooks/use-toast";
 import { GhsData } from "@/types";
 
 type Mode = "ghs" | "transport" | "dgd" | "sds-convert" | "un383";
+
+// 서버 multer 상한(upload.array("files", 10))과 짝 — 넘기면 multer 가
+// LIMIT_UNEXPECTED_FILE 로 요청 전체를 거부하므로 선택 단계에서 자른다.
+const MAX_FILES = 10;
 
 type BatchResultItem = {
   filename: string;
@@ -140,26 +145,27 @@ export default function Home() {
     const droppedFiles = Array.from(e.dataTransfer.files).filter(
       (f) => f.type === "application/pdf"
     );
-    if (droppedFiles.length > 0) {
-      setFiles((prev) => {
-        const existing = new Set(prev.map((f) => f.name));
-        const newOnes = droppedFiles.filter((f) => !existing.has(f.name));
-        return [...prev, ...newOnes];
+    if (droppedFiles.length > 0) addFiles(droppedFiles);
+  };
+
+  const addFiles = (incoming: File[]) => {
+    const existing = new Set(files.map((f) => f.name));
+    const newOnes = incoming.filter((f) => !existing.has(f.name));
+    const merged = [...files, ...newOnes];
+    if (merged.length > MAX_FILES) {
+      toast({
+        title: `Up to ${MAX_FILES} files per batch`,
+        description: `Only the first ${MAX_FILES} files were kept.`,
       });
     }
+    setFiles(merged.slice(0, MAX_FILES));
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(e.target.files ?? []).filter(
       (f) => f.type === "application/pdf"
     );
-    if (selected.length > 0) {
-      setFiles((prev) => {
-        const existing = new Set(prev.map((f) => f.name));
-        const newOnes = selected.filter((f) => !existing.has(f.name));
-        return [...prev, ...newOnes];
-      });
-    }
+    if (selected.length > 0) addFiles(selected);
     // Reset input so same file can be re-selected
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -573,6 +579,7 @@ export default function Home() {
                 {needsPayment && userPubkey && (
                   <PaymentModal
                     pubkey={userPubkey}
+                    authToken={ghsToken ?? undefined}
                     fileCount={files.length > 0 ? files.length : undefined}
                     onClose={() => setNeedsPayment(false)}
                     onPaid={() => { setNeedsPayment(false); setApiError(null); fetchUserInfo(); }}

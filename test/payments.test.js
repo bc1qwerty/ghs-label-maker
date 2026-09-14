@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDb } from "../server/db.js";
-import { PLANS, calcBatchPrice, settlePayment, recordUsage, reserveCredits, settlePaidUsage } from "../server/payments.js";
+import { PLANS, calcBatchPrice, settlePayment, reconcilePendingPayments, recordUsage, reserveCredits, settlePaidUsage } from "../server/payments.js";
 
 // Payment/credit core paths against an in-memory DB with the exact
 // production schema + statements. No network, no Lightning.
@@ -66,8 +66,8 @@ test("settlePayment: batch bought on plan='free' row lands on 'payg' (no infinit
   const c = stmts.getCredits.get("pk1");
   assert.equal(c.plan, "payg", "purchased credits must never sit under plan='free'");
 
-  // And recordUsage now actually deducts them
-  recordUsage(db, stmts, "pk1", "1.2.3.4", 2);
+  // And reserveCredits can now actually reserve them (plan != 'free')
+  assert.equal(reserveCredits(db, stmts, "pk1", 2), true);
   assert.equal(stmts.getCredits.get("pk1").amount, 3);
 });
 
@@ -93,7 +93,8 @@ test("settlePayment: a legacy expiry already in the past never costs the buyer c
   const pastExp = Math.floor(Date.now() / 1000) - 86400 * 100;
   stmts.upsertCredits.run("pk1", 193, "monthly", pastExp, 193, "monthly", pastExp);
 
-  recordUsage(db, stmts, "pk1", "1.2.3.4", 3);
+  assert.equal(reserveCredits(db, stmts, "pk1", 3), true);
+  settlePaidUsage(db, stmts, "pk1", "1.2.3.4", 3, 3);
   assert.equal(stmts.getCredits.get("pk1").amount, 190, "usage deducts normally, no reset");
 
   const payment = seedPayment(stmts, { plan: "pack50", hash: "h6", sats: 3000 });
@@ -110,11 +111,15 @@ test("recordUsage: free plan counts usage but never deducts", () => {
   assert.equal(stmts.countByPubkey.get("pk1").cnt, 2);
 });
 
-test("recordUsage: deduction never goes below zero", () => {
+test("recordUsage: 유료 plan 잔액이 있어도 무료 경로 정산은 차감하지 않는다", () => {
+  // 회귀(2026-09-13 감사): single 팩(1크레딧) 보유 + 2파일 업로드 → 예약 실패
+  // (1<2) → 무료 경로로 admit → recordUsage 가 결제한 크레딧을 무료 사용에
+  // 차감했다. 유료 차감은 reserveCredits/settlePaidUsage 전담이다.
   const { db, stmts } = freshDb();
   stmts.upsertCredits.run("pk1", 1, "payg", 0, 1, "payg", 0);
-  recordUsage(db, stmts, "pk1", "1.2.3.4", 3);
-  assert.equal(stmts.getCredits.get("pk1").amount, 0);
+  recordUsage(db, stmts, "pk1", "1.2.3.4", 2);
+  assert.equal(stmts.getCredits.get("pk1").amount, 1, "무료 경로 사용이 유료 크레딧을 깎으면 안 된다");
+  assert.equal(stmts.countByPubkey.get("pk1").cnt, 2);
 });
 
 // ─── TOCTOU 결제 예약(2026-08-31 감사) ───
@@ -204,4 +209,46 @@ test("settlePayment: 아는 plan 은 조용하다", () => {
     console.error = realError;
   }
   assert.deepEqual(errs, [], "정상 결제는 에러 로그를 남기지 않는다");
+});
+
+// ─── 결제-후-모달-닫힘 재조정(2026-09-13 감사) ───
+// 정산이 열려 있는 모달의 /check 폴링에만 의존했다 — 결제 직후 탭을 닫으면
+// sats 는 수취되고 크레딧은 영원히 안 붙었다. reconcilePendingPayments 가
+// /api/user 조회(로그인마다) 시점에 pending 인보이스를 phoenixd 로 확인해 정산한다.
+
+test("reconcilePendingPayments: paid-but-uncredited 인보이스를 정산한다", async () => {
+  const { db, stmts } = freshDb();
+  seedPayment(stmts, { plan: "pack50", hash: "h-orphan" });
+
+  await reconcilePendingPayments(db, stmts, PLANS, "pk1", async () => true);
+
+  assert.equal(stmts.getPayment.get("h-orphan").status, "paid");
+  assert.equal(stmts.getCredits.get("pk1").amount, 50);
+
+  // 멱등: 두 번 돌아도(예: /check 폴링과 경합) 이중 적립 없음
+  await reconcilePendingPayments(db, stmts, PLANS, "pk1", async () => true);
+  assert.equal(stmts.getCredits.get("pk1").amount, 50);
+});
+
+test("reconcilePendingPayments: 미결제·phoenixd 에러는 pending 을 건드리지 않는다", async () => {
+  const { db, stmts } = freshDb();
+  seedPayment(stmts, { plan: "pack50", hash: "h-unpaid" });
+
+  await reconcilePendingPayments(db, stmts, PLANS, "pk1", async () => false);
+  assert.equal(stmts.getPayment.get("h-unpaid").status, "pending");
+
+  await reconcilePendingPayments(db, stmts, PLANS, "pk1", async () => { throw new Error("phoenixd down"); });
+  assert.equal(stmts.getPayment.get("h-unpaid").status, "pending");
+  assert.equal(stmts.getCredits.get("pk1"), undefined);
+});
+
+test("reconcilePendingPayments: 7일 지난 pending 은 조회 대상이 아니다", async () => {
+  const { db, stmts } = freshDb();
+  seedPayment(stmts, { plan: "pack50", hash: "h-old" });
+  db.exec("UPDATE payments SET created_at = unixepoch() - 86400 * 8 WHERE payment_hash = 'h-old'");
+
+  let asked = 0;
+  await reconcilePendingPayments(db, stmts, PLANS, "pk1", async () => { asked++; return true; });
+  assert.equal(asked, 0, "만료된 옛 인보이스로 phoenixd 를 두드리지 않는다");
+  assert.equal(stmts.getPayment.get("h-old").status, "pending");
 });

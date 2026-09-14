@@ -15,8 +15,11 @@ GHS (Globally Harmonized System) hazard label generator. Full-stack app with a R
 
 ## Key Files
 - `src/` -- React frontend (App.tsx, components/, hooks/, pages/)
-- `server/index.js` -- Express API server (port 3100)
-- `server/ghs.ts` -- GHS data logic
+- `server/index.js` -- Express API server (port 3100, GHS 추출 로직 포함)
+- `server/llm.js` -- 로컬 MLX + Claude 폴백 LLM 경로
+- `server/payments.js` -- 요금제·배치 가격·크레딧 정산
+- `server/db.js` -- SQLite 스키마 + prepared statements
+- `server/client-ip.js` -- 클라이언트 IP 판정 (rate limit·무료한도 키)
 - `server/ghs.db` -- SQLite database
 - `vite.config.ts` -- Vite config with proxy to backend
 - `public/` -- Static assets (GHS pictograms)

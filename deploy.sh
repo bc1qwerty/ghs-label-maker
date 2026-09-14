@@ -36,7 +36,10 @@ SERVER_FILES=(index.js db.js payments.js llm.js client-ip.js)
 # 모듈은 조용히 안 올라가고, 그걸 import 하는 index.js 때문에 VPS 가 부팅에
 # 실패한다 — 배포가 끝난 뒤에야 사이트가 죽은 걸로 알게 된다.
 missing=()
-for f in "$SRC"/server/*.js; do
+# 런타임 모듈은 .js 만이 아니다 — .mjs/.cjs/런타임 .json 도 같은 지뢰라 함께
+# 훑는다(안 맞는 글롭은 리터럴로 남으므로 -e 로 거른다).
+for f in "$SRC"/server/*.js "$SRC"/server/*.mjs "$SRC"/server/*.cjs "$SRC"/server/*.json; do
+  [ -e "$f" ] || continue
   base=$(basename "$f")
   found=0
   for listed in "${SERVER_FILES[@]}"; do [ "$base" = "$listed" ] && found=1 && break; done

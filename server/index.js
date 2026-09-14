@@ -6,7 +6,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
 import { createDb } from "./db.js";
-import { PLANS, BATCH_MAX_FILES, calcBatchPrice, settlePayment, recordUsage as recordUsageImpl, reserveCredits as reserveCreditsImpl, settlePaidUsage as settlePaidUsageImpl } from "./payments.js";
+import { PLANS, BATCH_MAX_FILES, calcBatchPrice, settlePayment, reconcilePendingPayments, recordUsage as recordUsageImpl, reserveCredits as reserveCreditsImpl, settlePaidUsage as settlePaidUsageImpl } from "./payments.js";
 import { complete, extractJson, llmStats } from "./llm.js";
 import { getClientIp } from "./client-ip.js";
 
@@ -235,9 +235,15 @@ app.use("/api/payment", (req, res, next) => {
   // throttle invoice creation. The UI refetches the price on every file-count
   // change, so a handful of adjustments burned that budget and the endpoint
   // started answering 429 in the middle of the payment flow.
-  if (req.path.startsWith("/price/")) return apiRateLimit(req, res, next);
+  // /check/ 도 같은 카브아웃: 모달이 3초마다 폴링(20/min)해 10/min 버킷을
+  // 넘겨 매 분 후반 ~30초는 429 — 결제 완료 표시가 그만큼 늦었다. check 는
+  // 인보이스도 phoenixd 쓰기도 만들지 않는 조회다.
+  if (req.path.startsWith("/price/") || req.path.startsWith("/check/")) return apiRateLimit(req, res, next);
   return paymentRateLimit(req, res, next);
 });
+app.use("/api/user", apiRateLimit);
+app.use("/api/history", apiRateLimit);
+app.use("/api/plans", apiRateLimit);
 
 // ─── Lightning payments ───
 function phoenixdAuth() {
@@ -252,9 +258,12 @@ app.get("/api/payment/price/:count", (req, res) => {
 });
 
 // Create invoice for batch (per-file pricing)
-app.post("/api/payment/create-batch", express.json(), async (req, res) => {
-  const { fileCount, pubkey } = req.body;
-  if (!pubkey) return res.status(400).json({ error: "Login required" });
+// ⚠ body 의 pubkey 를 믿지 않는다: 존재만 보고 통과시키면 비로그인 클라이언트가
+//   임의 pubkey 로 phoenixd 인보이스를 남발할 수 있다. 세션 검증(requireAuth)을
+//   거쳐 req.verifiedPubkey 만 쓴다 — 다른 로그인 게이트 라우트와 동일.
+app.post("/api/payment/create-batch", express.json(), requireAuth, async (req, res) => {
+  const { fileCount } = req.body;
+  const pubkey = req.verifiedPubkey;
   if (!fileCount || fileCount < 1 || fileCount > BATCH_MAX_FILES) return res.status(400).json({ error: "File count must be 1-30" });
   if (!PHOENIXD_PASSWORD) return res.status(503).json({ error: "Payment not configured" });
 
@@ -287,9 +296,9 @@ app.post("/api/payment/create-batch", express.json(), async (req, res) => {
 });
 
 // Create invoice (plan-based)
-app.post("/api/payment/create", express.json(), async (req, res) => {
-  const { plan, pubkey } = req.body;
-  if (!pubkey) return res.status(400).json({ error: "Login required" });
+app.post("/api/payment/create", express.json(), requireAuth, async (req, res) => {
+  const { plan } = req.body;
+  const pubkey = req.verifiedPubkey;
   if (!PLANS[plan]) return res.status(400).json({ error: "Invalid plan" });
   if (!PHOENIXD_PASSWORD) return res.status(503).json({ error: "Payment not configured" });
 
@@ -323,6 +332,16 @@ app.post("/api/payment/create", express.json(), async (req, res) => {
   }
 });
 
+async function phoenixdIsPaid(hash) {
+  const resp = await fetch(`${PHOENIXD_URL}/payments/incoming/${hash}`, {
+    headers: { Authorization: phoenixdAuth() },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!resp.ok) return false;
+  const data = await resp.json();
+  return !!data.isPaid;
+}
+
 // Check payment status
 app.get("/api/payment/check/:hash", async (req, res) => {
   const { hash } = req.params;
@@ -333,14 +352,7 @@ app.get("/api/payment/check/:hash", async (req, res) => {
   if (!PHOENIXD_PASSWORD) return res.json({ paid: false });
 
   try {
-    const resp = await fetch(`${PHOENIXD_URL}/payments/incoming/${hash}`, {
-      headers: { Authorization: phoenixdAuth() },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!resp.ok) return res.json({ paid: false });
-    const data = await resp.json();
-
-    if (data.isPaid) {
+    if (await phoenixdIsPaid(hash)) {
       // Transactional + idempotent (server/payments.js): only the first
       // poll settles; concurrent polls for the same hash get paid:true
       // without double-crediting.
@@ -365,9 +377,13 @@ async function requireAuth(req, res, next) {
 }
 
 // User info (credits, usage)
-app.get("/api/user/:pubkey", requireAuth, (req, res) => {
+app.get("/api/user/:pubkey", requireAuth, async (req, res) => {
   const { pubkey } = req.params;
   if (pubkey !== req.verifiedPubkey) return res.status(403).json({ error: "Forbidden" });
+  // 결제 후 모달을 닫아 /check 폴링이 죽은 인보이스(돈은 왔는데 크레딧이 안
+  // 붙은 상태)를 로그인·잔액 조회 시점에 정산한다. settlePayment 가 멱등이라
+  // /check 폴링과 경합해도 이중 적립은 없다.
+  if (PHOENIXD_PASSWORD) await reconcilePendingPayments(db, stmts, PLANS, pubkey, phoenixdIsPaid);
   const credits = stmts.getCredits.get(pubkey);
   const { cnt } = stmts.countByPubkey.get(pubkey);
 
@@ -904,6 +920,23 @@ app.get(SPA_ROUTES, (_req, res) => {
 // 화면은 그대로 앱 셸을 보여주되 상태 코드만 진실을 말하게 한다.
 app.get("/{*splat}", (_req, res) => {
   res.status(404).sendFile(path.join(__dirname, "../dist/index.html"));
+});
+
+// ─── Error handler ───
+// multer 에러(비 PDF·10MB 초과·11개 이상)가 Express 기본 핸들러로 떨어지면
+// HTML 500 + 전체 스택트레이스(서버 절대경로 포함)가 그대로 나간다 — VPS pm2
+// 에는 NODE_ENV 가 없어 non-production 취급이다(위 CORS 주석 참조). JSON 을
+// 기대하는 프론트를 위해 상태코드와 본문을 바로잡는다.
+// eslint 없음 — next 는 4-인자 시그니처(에러 미들웨어 판별)를 위해 필요하다.
+app.use((err, _req, res, _next) => {
+  if (err instanceof multer.MulterError) {
+    return res.status(err.code === "LIMIT_FILE_SIZE" ? 413 : 400).json({ error: err.message });
+  }
+  if (err.message === "Only PDF files are allowed") {
+    return res.status(400).json({ error: err.message });
+  }
+  console.error("[GHS] Unhandled error:", err);
+  res.status(500).json({ error: "Internal error" });
 });
 
 app.listen(PORT, () => console.log(`[GHS] Server running on port ${PORT}`));

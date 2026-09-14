@@ -17,7 +17,12 @@ const LOCAL_TIMEOUT_MS = Number(process.env.LLM_LOCAL_TIMEOUT_MS || 180_000);
 
 const FALLBACK_ENABLED = process.env.LLM_FALLBACK !== "off";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// ⚠ 클라이언트는 첫 폴백 호출 때 만든다. ESM import 는 index.js 의
+// loadEnvFile() 보다 먼저 실행되므로, 모듈 로드 시점에 만들면 .env 로만
+// 키가 공급되는 재부팅 시나리오에서 apiKey=null 이 프로세스 수명 내내 굳는다
+// (SDK 는 생성 시점 값을 고정하고 재조회하지 않는다).
+let _anthropic;
+const getAnthropic = () => (_anthropic ??= new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }));
 
 // 관측용 카운터. /api/health 가 노출한다 — 폴백이 조용히 상시화되면
 // "로컬로 바꿨다"는 말만 남고 실제로는 계속 과금되는 상태가 되기 때문이다.
@@ -49,7 +54,7 @@ async function callLocal(prompt, maxTokens) {
 }
 
 async function callFallback(prompt, maxTokens) {
-  const message = await anthropic.messages.create({
+  const message = await getAnthropic().messages.create({
     model: FALLBACK_MODEL,
     max_tokens: maxTokens,
     messages: [{ role: "user", content: prompt }],

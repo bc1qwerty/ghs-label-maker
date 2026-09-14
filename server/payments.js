@@ -50,9 +50,9 @@ export function settlePayment(db, stmts, plans, payment) {
     let creditsToAdd, planName;
     if (payment.plan.startsWith("batch-")) {
       creditsToAdd = parseInt(payment.plan.split("-")[1], 10) || 1;
-      // Purchased credits must never sit under plan='free' — recordUsage
-      // only deducts non-free plans, so 'free' meant infinite credits when
-      // a batch was bought after a plan-expiry reset.
+      // Purchased credits must never sit under plan='free' — reserveCredits
+      // excludes free-plan rows, so credits parked there would be
+      // unreservable (paid but unusable) after a plan-expiry reset.
       planName = existing && existing.plan !== "free" ? existing.plan : "payg";
     } else {
       const plan = plans[payment.plan];
@@ -88,24 +88,34 @@ export function settlePayment(db, stmts, plans, payment) {
 }
 
 /**
- * Record usage rows and deduct credits for paid plans. Free-tier usage is
- * counted but never deducts.
+ * Record usage rows. Never deducts credits: paid usage is charged by
+ * reserveCredits/settlePaidUsage at admission, and recordUsage is only
+ * reached via the free/anonymous admission path — a leftover deduction
+ * here double-charged a paid balance for free-tier usage (e.g. 1 credit
+ * left, 2-file upload admitted free, then 1 paid credit silently gone).
  */
 export function recordUsage(db, stmts, pubkey, ip, count) {
   const record = db.transaction(() => {
     for (let i = 0; i < count; i++) {
       stmts.recordUsage.run(pubkey, ip);
     }
-    if (pubkey) {
-      const credits = stmts.getCredits.get(pubkey);
-      if (credits && credits.amount > 0 && credits.plan !== "free") {
-        for (let i = 0; i < count; i++) {
-          stmts.deductCredit.run(pubkey);
-        }
-      }
-    }
   });
   record();
+}
+
+/**
+ * Settle paid-but-uncredited invoices for one pubkey. Settlement normally
+ * happens inside GET /api/payment/check, which only the open payment modal
+ * polls — close the tab after paying and the sats arrive but the credits
+ * never do. Called on /api/user reads (every login) with `isPaid(hash)`
+ * asking phoenixd; reuses settlePayment so it stays idempotent.
+ */
+export async function reconcilePendingPayments(db, stmts, plans, pubkey, isPaid) {
+  for (const payment of stmts.getPendingPayments.all(pubkey)) {
+    try {
+      if (await isPaid(payment.payment_hash)) settlePayment(db, stmts, plans, payment);
+    } catch { /* phoenixd 불가 — 다음 조회에서 재시도 */ }
+  }
 }
 
 /**

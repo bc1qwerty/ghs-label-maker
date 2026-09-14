@@ -49,7 +49,6 @@ export function createDb(dbPath) {
       INSERT INTO credits (pubkey, amount, plan, plan_expires_at) VALUES (?, ?, ?, ?)
       ON CONFLICT(pubkey) DO UPDATE SET amount=?, plan=?, plan_expires_at=?
     `),
-    deductCredit: db.prepare("UPDATE credits SET amount = amount - 1 WHERE pubkey = ? AND amount > 0"),
     // 원자적 예약: 잔액이 충분할 때만(amount >= n) 한 번에 차감한다. changes===1
     // 이어야 통과 — 동시 요청이 모두 checkUsage 를 지나쳐 1크레딧으로 N회
     // 추출하던 TOCTOU 를 닫는다(2026-08-31 감사). 무료 팩(plan='free')은 제외.
@@ -58,6 +57,9 @@ export function createDb(dbPath) {
     refundCredits: db.prepare("UPDATE credits SET amount = amount + ? WHERE pubkey = ?"),
     createPayment: db.prepare("INSERT INTO payments (pubkey, payment_hash, amount_sats, plan) VALUES (?, ?, ?, ?)"),
     getPayment: db.prepare("SELECT * FROM payments WHERE payment_hash = ?"),
+    // 결제 후 모달이 닫혀 폴링이 죽은(paid-but-uncredited) 인보이스 재조정용.
+    // 7일 창: 라이트닝 인보이스는 그 안에 만료되고, 전수 스캔을 피한다.
+    getPendingPayments: db.prepare("SELECT * FROM payments WHERE pubkey = ? AND status = 'pending' AND created_at > unixepoch() - 86400 * 7"),
     // Conditional flip: only one caller can ever transition pending → paid.
     // Concurrent /api/payment/check polls used to double-credit via the old
     // unconditional UPDATE.
