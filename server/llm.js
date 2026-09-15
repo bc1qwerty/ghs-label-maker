@@ -6,6 +6,9 @@
 // 결제한 사용자가 mac 상태에 인질로 잡히지 않게 하려는 것이므로, 폴백을 지우려면
 // 그 트레이드오프를 다시 판단해야 한다.
 import Anthropic from "@anthropic-ai/sdk";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 const LOCAL_URL = process.env.LLM_LOCAL_URL || "http://127.0.0.1:8080/v1/chat/completions";
 const LOCAL_MODEL = process.env.LLM_LOCAL_MODEL || "local";
@@ -53,12 +56,49 @@ async function callLocal(prompt, maxTokens) {
   }
 }
 
-async function callFallback(prompt, maxTokens) {
+// 폴백 1회 = 종량 과금(ANTHROPIC_API_KEY) 1회다. 그런데 위 카운터는 메모리라
+// pm2 restart 마다 0 으로 돌아가고 console.warn 은 pm2-logrotate 가 지운다 —
+// 지금까지 "언제부터 얼마나 썼나" 를 사후에 알 방법이 아예 없었다. 그래서 과금된
+// 호출만 원장에 한 줄씩 남긴다. 형식·경로는 content-engine(lib/providers.mjs) 및
+// news-summary-bot(internal/llm/usage.go) 이 쓰는 ~/.ai-usage/YYYY-MM-DD.jsonl 과
+// 같게 맞췄다(원장이 두 갈래로 갈리면 세는 방법도 둘이 된다). 사람은 wc -l 로 센다.
+//
+// ⚠이 코드는 VPS pm2 에서 도니 원장도 VPS 홈(/home/ubuntu/.ai-usage)에 쌓인다.
+//   맥의 원장과는 host 필드로 갈린다. HOME 은 모듈 로드가 아니라 호출 시점에
+//   읽는다 — 이 파일 위쪽 lazy init 주석과 같은 이유다.
+// ⚠기록 실패는 삼킨다. 원장 때문에 사용자 추출이 죽으면 안 된다.
+function logUsage(model, prompt, maxTokens, reason, usage) {
+  try {
+    const dir = path.join(os.homedir(), ".ai-usage");
+    fs.mkdirSync(dir, { recursive: true });
+    const now = new Date();
+    fs.appendFileSync(path.join(dir, `${now.toISOString().slice(0, 10)}.jsonl`), JSON.stringify({
+      ts: now.toISOString(),
+      host: process.env.HOST_TAG || os.hostname().split(".")[0],
+      service: process.env.AI_SERVICE_NAME || "ghs-label-maker",
+      model,
+      prompt_chars: prompt.length,
+      prompt_tokens_estimate: Math.ceil(prompt.length / 4),
+      max_tokens: maxTokens ?? null,
+      // 여기는 추정이 아니라 API 가 돌려준 실측이다 — 형제 원장에는 없는 필드지만
+      // 공통 필드를 건드리지 않으므로 합산은 그대로 된다.
+      input_tokens: usage?.input_tokens ?? null,
+      output_tokens: usage?.output_tokens ?? null,
+      // 폴백 사유. pm2 로그가 사라진 뒤에도 "왜 과금됐나" 가 남는다.
+      reason,
+    }) + "\n");
+  } catch { /* ignore */ }
+}
+
+async function callFallback(prompt, maxTokens, reason) {
   const message = await getAnthropic().messages.create({
     model: FALLBACK_MODEL,
     max_tokens: maxTokens,
     messages: [{ role: "user", content: prompt }],
   });
+  // 응답이 온 시점에 이미 과금됐다. 본문이 비어 아래에서 throw 하더라도 원장에는
+  // 남겨야 한다 — 원장은 "성공한 추출" 이 아니라 "청구될 호출" 을 세는 것이다.
+  logUsage(`claude/${FALLBACK_MODEL}`, prompt, maxTokens, reason, message.usage);
   const text = message.content[0]?.type === "text" ? message.content[0].text : "";
   if (!text) throw new Error("fallback LLM returned empty response");
   return text;
@@ -85,7 +125,7 @@ export async function complete(prompt, maxTokens, logTag = "llm") {
     llmStats.lastFallbackReason = reason;
     llmStats.lastFallbackAt = Math.floor(Date.now() / 1000);
     try {
-      return await callFallback(prompt, maxTokens);
+      return await callFallback(prompt, maxTokens, reason);
     } catch (err2) {
       llmStats.failed++;
       throw err2;
