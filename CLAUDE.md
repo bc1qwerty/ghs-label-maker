@@ -47,6 +47,9 @@ npm run start     # Build + start server
 ⚠**폴백은 조용하다.** 로컬이든 Claude 든 정상 JSON 을 돌려주므로 응답만 봐서는
 구분이 안 된다. `/api/health` 의 `llm` 카운터(`local`/`fallback`/`failed`)를 볼 것.
 `fallback` 이 계속 오르고 있으면 터널이 끊긴 것이고, 그동안 과금되고 있다.
+단 그 카운터는 메모리라 `pm2 restart` 마다 0 으로 돌아간다. 누적은 VPS 의 원장에
+쌓인다 -- `ssh vps 'wc -l ~/.ai-usage/*.jsonl'` (한 줄 = 과금된 폴백 1회, 형식은
+content-engine 원장과 동일). 폴백이 한 번도 없었으면 그 디렉토리 자체가 없다.
 
 ⚠**`deploy.sh` 는 서버 파일을 이름으로 하나씩 올린다.** `server/` 에 모듈을
 추가하면 그 목록에 넣어야 한다. 안 그러면 VPS 가 import 실패로 못 뜬다.
