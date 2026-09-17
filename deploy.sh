@@ -54,6 +54,15 @@ fi
 rsync -az -e ssh \
   "${SERVER_FILES[@]/#/$SRC/server/}" \
   "$VPS:$DEST/server/"
+
+# ⚠역방향 지뢰(2026-09-17 신설): 위 rsync 는 파일 나열이라 --delete 가 없다 —
+# 리포에서 **지운** 모듈이 프로드에 영영 남는다. 실사고: b6f735e(9/14)가 지운
+# 4파일(build.mjs·ghs.ts·health.ts·logger.ts)이 사흘간 프로드에 남아 있었고,
+# disk-audit 의 코드 드리프트 검사도 git ls-files 기준이라 **원리적으로 못 본다**
+# (리포에 없는 파일은 비교 목록에 안 들어간다). 배포가 삭제도 전파해야 한다.
+# server/ 의 코드 확장자만 대상 — .env·ghs.db* 는 확장자가 달라 애초에 대상 밖이다.
+echo "==> Pruning server files removed from the repo"
+ssh "$VPS" "cd $DEST/server && for f in *.js *.mjs *.cjs *.ts; do [ -e \"\$f\" ] || continue; case \" ${SERVER_FILES[*]} \" in *\" \$f \"*) ;; *) rm -v \"\$f\";; esac; done"
 rsync -az -e ssh "$SRC/package.json" "$SRC/package-lock.json" "$VPS:$DEST/"
 
 echo "==> Installing deps + restarting"
