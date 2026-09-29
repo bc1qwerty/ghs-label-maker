@@ -1,5 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { AlertCircle } from "lucide-react";
+import { Link } from "wouter";
 
 export default function NotFound() {
   return (
@@ -12,7 +13,12 @@ export default function NotFound() {
           </div>
 
           <p className="mt-4 text-sm text-gray-600">
-            Did you forget to add the page to the router?
+            The page you're looking for doesn't exist.
+          </p>
+          <p className="mt-4 text-sm">
+            <Link href="/" className="text-gray-600 hover:text-primary transition-colors">
+              &larr; Back to GHS Label Maker
+            </Link>
           </p>
         </CardContent>
       </Card>

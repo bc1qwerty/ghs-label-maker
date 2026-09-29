@@ -3,6 +3,7 @@ import cors from "cors";
 import multer from "multer";
 import { createRequire } from "module";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
 import { createDb } from "./db.js";
@@ -18,6 +19,8 @@ try { process.loadEnvFile(); } catch { /* no .env in dev — fine */ }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+// helmet 을 안 쓰는 유일한 Express 앱이라(형제 api·dash 는 helmet 이 지운다) 직접 끈다.
+app.disable("x-powered-by");
 const PORT = process.env.PORT || 3100;
 
 // ─── Database ───
@@ -69,6 +72,11 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
+// Vite 산출물 /assets/* 는 파일명에 콘텐츠 해시가 있어 내용이 바뀌면 이름도 바뀐다 —
+// 1년 immutable 로 두면 재방문마다 에셋마다 재검증 왕복이 없다(CF 없이 Caddy 직결이라
+// 기본값 max-age=0 이 그대로 브라우저에 닿았다, 2026-09-29 실측). index.html 과
+// public/ 의 파일은 해시가 없으니 아래 기본값(재검증) 그대로 둔다.
+app.use("/assets", express.static(path.join(__dirname, "../dist/assets"), { maxAge: "1y", immutable: true }));
 app.use(express.static(path.join(__dirname, "../dist")));
 
 // ─── Auth: verify via shared api.txid.uk session DB ───
@@ -907,10 +915,24 @@ app.get("/api/plans", (_req, res) => res.json(PLANS));
 //   404 로 나갔다(2026-09-07 실측·수정). 홈 푸터가 raw <a> 로 이 둘을 링크하므로
 //   크롤러가 반드시 방문한다 - 색인에서 탈락한다.
 //   ⚠ 이 목록은 App.tsx 의 <Route path> 와 짝이다. 한쪽만 늘리면 다시 404 가 난다.
-const SPA_ROUTES = ["/terms", "/privacy"];
-app.get(SPA_ROUTES, (_req, res) => {
-  res.sendFile(path.join(__dirname, "../dist/index.html"));
-});
+//   값은 그 페이지의 <h1> 제목. 셸(index.html)의 canonical·og:url·title 이 홈으로
+//   굳어 있어 그대로 보내면 두 페이지가 «홈의 중복» 으로 선언된다(Lighthouse canonical
+//   실패, 2026-09-29 실측) — 라우트별로 그 값들만 바꿔 보낸다.
+const SPA_ROUTES = { "/terms": "Terms of Service", "/privacy": "Privacy Policy" };
+const SHELL_PATH = path.join(__dirname, "../dist/index.html");
+for (const [route, title] of Object.entries(SPA_ROUTES)) {
+  const url = `https://ghs.txid.uk${route}`;
+  const fullTitle = `${title} — GHS Label Generator`;
+  app.get(route, (_req, res) => {
+    const html = fs.readFileSync(SHELL_PATH, "utf8")
+      .replace(/<link rel="canonical" href="[^"]*"/, `<link rel="canonical" href="${url}"`)
+      .replace(/<meta property="og:url" content="[^"]*"/, `<meta property="og:url" content="${url}"`)
+      .replace(/<title>[^<]*<\/title>/, `<title>${fullTitle}</title>`)
+      .replace(/<meta property="og:title" content="[^"]*"/, `<meta property="og:title" content="${fullTitle}"`)
+      .replace(/<meta name="twitter:title" content="[^"]*"/, `<meta name="twitter:title" content="${fullTitle}"`);
+    res.type("html").send(html);
+  });
+}
 
 // 없는 경로 fallback.
 // ⚠ 200 이 아니라 404 로 준다. 실제 페이지(/, /index.html, /og-generator.html)는

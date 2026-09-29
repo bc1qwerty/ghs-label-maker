@@ -3,7 +3,7 @@ import { Link } from "wouter";
 
 export default function Privacy() {
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <main className="min-h-screen bg-background text-foreground">
       <div className="max-w-3xl mx-auto px-6 py-12">
         <nav className="mb-8 text-sm">
           <Link href="/" className="text-muted-foreground hover:text-primary transition-colors">
@@ -219,6 +219,6 @@ export default function Privacy() {
           <Link href="/terms" className="hover:text-primary transition-colors">Terms of Service</Link>
         </div>
       </div>
-    </div>
+    </main>
   );
 }
