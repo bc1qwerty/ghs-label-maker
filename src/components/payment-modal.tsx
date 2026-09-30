@@ -62,11 +62,18 @@ export function PaymentModal({ pubkey, fileCount, authToken, onClose, onPaid }: 
     return () => { opener?.focus(); };
   }, []);
 
+  // «paid» 단계는 어느 경로로 닫든(X·오버레이·Escape·Done) 홈이 크레딧을 다시
+  // 읽어야 한다. Done 만 onPaid 를 부르던 것을 닫기 경로 하나로 모은다.
+  const closeModal = () => {
+    if (step === "paid") onPaid();
+    onClose();
+  };
+
   React.useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") closeModal(); };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [closeModal]);
 
   React.useEffect(() => {
     panelRef.current?.querySelector<HTMLElement>("button, a[href], [tabindex]:not([tabindex='-1'])")?.focus();
@@ -136,7 +143,7 @@ export function PaymentModal({ pubkey, fileCount, authToken, onClose, onPaid }: 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
       <div
         ref={panelRef}
         role="dialog"
@@ -144,7 +151,7 @@ export function PaymentModal({ pubkey, fileCount, authToken, onClose, onPaid }: 
         aria-labelledby="payment-modal-title"
         className="bg-card border rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-6 space-y-4 relative"
       >
-        <button onClick={onClose} aria-label="Close" className="absolute top-4 right-4 text-muted-foreground hover:text-foreground">
+        <button onClick={closeModal} aria-label="Close" className="absolute top-4 right-4 text-muted-foreground hover:text-foreground">
           <X className="h-5 w-5" />
         </button>
 
@@ -286,7 +293,7 @@ export function PaymentModal({ pubkey, fileCount, authToken, onClose, onPaid }: 
             <p className="text-muted-foreground">
               You now have <strong className="text-foreground">{credits}</strong> credits available.
             </p>
-            <Button onClick={() => { onPaid(); onClose(); }} className="w-full" size="lg">
+            <Button onClick={closeModal} className="w-full" size="lg">
               Continue Generating Labels
             </Button>
           </div>
