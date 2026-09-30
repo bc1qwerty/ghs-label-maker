@@ -935,7 +935,7 @@ for (const [route, title] of Object.entries(SPA_ROUTES)) {
 }
 
 // 없는 경로 fallback.
-// ⚠ 200 이 아니라 404 로 준다. 실제 페이지(/, /index.html, /og-generator.html)는
+// ⚠ 200 이 아니라 404 로 준다. 실제 페이지(/, /index.html)는
 // 위의 express.static 이, SPA 라우트는 바로 위 화이트리스트가 처리한다 — 여기까지
 // 온 경로는 존재하지 않는 것이다. 200 을 주면 검색엔진이 오타 URL 을 정상 페이지로
 // 색인하고 링크 검사도 깨진 링크를 못 잡는다(soft-404).
