@@ -174,11 +174,21 @@ export default function Home() {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // txid-auth.js is a separate <script> in index.html; when it fails to load
+  // there is no header login button either, so say so instead of doing nothing.
+  const requestLogin = (reason?: string) => {
+    if (!window.txidAuth?.openLogin) {
+      setApiError("Login widget failed to load. Please reload the page and try again.");
+      return;
+    }
+    if (reason) setApiError(reason);
+    window.txidAuth.openLogin();
+  };
+
   const handleGenerate = async () => {
     if (files.length === 0) return;
     if (!userPubkey) {
-      setApiError("Please login with Lightning wallet first (top-right button).");
-      window.txidAuth?.openLogin?.();
+      requestLogin("Please login with Lightning wallet first (top-right button).");
       return;
     }
     setProcessingStatus("processing");
@@ -213,8 +223,7 @@ export default function Home() {
       if (response.status === 402) {
         const err = await response.json().catch(() => ({})) as { needsLogin?: boolean; message?: string };
         if (err.needsLogin && !userPubkey) {
-          setApiError("Free trial exhausted. Please login and purchase credits.");
-          window.txidAuth?.openLogin?.();
+          requestLogin("Free trial exhausted. Please login and purchase credits.");
         } else {
           setApiError("Free trial exhausted. Please purchase credits.");
           setNeedsPayment(true);
@@ -646,7 +655,7 @@ export default function Home() {
                     <div className="text-3xl">⚡</div>
                     <p className="text-sm font-semibold">Lightning Login</p>
                     <p className="text-xs text-muted-foreground">Sign in with your Bitcoin Lightning wallet to track usage and purchase credits.</p>
-                    <Button size="sm" className="w-full" onClick={() => window.txidAuth?.openLogin?.()}>
+                    <Button size="sm" className="w-full" onClick={() => requestLogin()}>
                       Login
                     </Button>
                     <a

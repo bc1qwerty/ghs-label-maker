@@ -33,6 +33,7 @@ export function PaymentModal({ pubkey, fileCount, authToken, onClose, onPaid }: 
   const [invoiceAmount, setInvoiceAmount] = React.useState(0);
   const [batchPrice, setBatchPrice] = React.useState<{ perFile: number; total: number; discount: number } | null>(null);
   const pollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  const panelRef = React.useRef<HTMLDivElement>(null);
 
   const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth < 768;
 
@@ -55,6 +56,21 @@ export function PaymentModal({ pubkey, fileCount, authToken, onClose, onPaid }: 
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [fileCount]);
+
+  React.useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    return () => { opener?.focus(); };
+  }, []);
+
+  React.useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  React.useEffect(() => {
+    panelRef.current?.querySelector<HTMLElement>("button, a[href], [tabindex]:not([tabindex='-1'])")?.focus();
+  }, [step]);
 
   async function createInvoice(endpoint: string, body: object, label: string) {
     setError(null);
@@ -121,15 +137,21 @@ export function PaymentModal({ pubkey, fileCount, authToken, onClose, onPaid }: 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bg-card border rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-6 space-y-4 relative">
-        <button onClick={onClose} className="absolute top-4 right-4 text-muted-foreground hover:text-foreground">
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="payment-modal-title"
+        className="bg-card border rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-6 space-y-4 relative"
+      >
+        <button onClick={onClose} aria-label="Close" className="absolute top-4 right-4 text-muted-foreground hover:text-foreground">
           <X className="h-5 w-5" />
         </button>
 
         {step === "select" && (
           <>
             <div className="space-y-1">
-              <h3 className="text-lg font-bold flex items-center gap-2">
+              <h3 id="payment-modal-title" className="text-lg font-bold flex items-center gap-2">
                 <Zap className="h-5 w-5 text-yellow-500" />
                 Purchase Credits
               </h3>
@@ -204,7 +226,7 @@ export function PaymentModal({ pubkey, fileCount, authToken, onClose, onPaid }: 
         {step === "invoice" && (
           <>
             <div className="space-y-1 text-center">
-              <h3 className="text-lg font-bold flex items-center justify-center gap-2">
+              <h3 id="payment-modal-title" className="text-lg font-bold flex items-center justify-center gap-2">
                 <Zap className="h-5 w-5 text-yellow-500" />
                 {invoiceLabel}
               </h3>
@@ -260,7 +282,7 @@ export function PaymentModal({ pubkey, fileCount, authToken, onClose, onPaid }: 
         {step === "paid" && (
           <div className="text-center space-y-4 py-4">
             <CheckCircle className="h-14 w-14 text-emerald-500 mx-auto" />
-            <h3 className="text-xl font-bold">Payment Confirmed!</h3>
+            <h3 id="payment-modal-title" className="text-xl font-bold">Payment Confirmed!</h3>
             <p className="text-muted-foreground">
               You now have <strong className="text-foreground">{credits}</strong> credits available.
             </p>
