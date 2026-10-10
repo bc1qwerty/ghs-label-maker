@@ -30,7 +30,10 @@ npm run dev       # Vite dev server (port 5173, proxies /api to :3100)
 npm run server    # Express backend (port 3100)
 npm run build     # Production build
 npm run start     # Build + start server
+npm test          # node --test (deploy.sh 도 먼저 돌린다)
 ```
+- Node 메이저는 `.nvmrc`(22) — VPS·CI 와 같다. 맥 기본 node(26)에선 better-sqlite3 ABI 가 안 맞아
+  테스트가 안 돈다: `PATH=/opt/homebrew/opt/node@24/bin:$PATH npm test` (맥엔 node@22 가 없다).
 
 ## Environment Variables
 - `ANTHROPIC_API_KEY` -- 폴백 전용. 평소 추출은 로컬 MLX 로 돌아 호출되지 않는다
