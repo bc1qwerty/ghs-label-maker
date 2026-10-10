@@ -8,7 +8,8 @@
     "build": "vite build",
     "server": "node server/index.js",
     "start": "npm run build && npm run server",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",
