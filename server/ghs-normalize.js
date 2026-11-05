@@ -51,14 +51,41 @@ export function sortStatements(statements) {
     .map((x) => x.s);
 }
 
-// PDF 표에서 온 「(031) 499 - 0394」 같은 띄어쓰기
+// PDF 표에서 한 문구가 두 줄로 갈라져 뒷부분이 코드 없이 온다(「P377 가스 누출 화재」 + 「누출을 안전하게
+// 막을 수 없다면, …」). 앞 문구가 문장으로 끝나지 않았을 때만 붙인다. 원래 코드 없는 문구는 그대로 둔다.
+export function mergeContinuations(statements) {
+  const out = [];
+  for (const s of statements) {
+    const prev = out[out.length - 1];
+    if (prev && !codesOf(s).length && codesOf(prev).length && !/[.。]\s*$|(오|다|것)\s*$/.test(prev)) {
+      out[out.length - 1] = `${prev.replace(/[:：]?\s*$/, "")}: ${s.trim()}`;
+    } else {
+      out.push(s);
+    }
+  }
+  return out;
+}
+
+// 국내 번호는 첫 번호만 하이픈으로: 「(031) 499 - 0394」 「0553455200」 「02.721.0800」
+// 「TEL : 043)536-0161, FAX : …」 「080-727-7777 야간 : 070-…」 「031-467-6114 건축기술1팀」.
+// 국내 번호로 읽히지 않으면 하이픈 주변 띄어쓰기만 다듬는다.
 export function normalizePhone(phone) {
-  return phone ? String(phone).replace(/\s*-\s*/g, "-").replace(/\s+/g, " ").trim() : phone;
+  if (!phone) return phone;
+  const s = String(phone);
+  const m = s.match(/(?<!\d)(?:\(?0\d{1,2}\)?[\s.)-]*\d{3,4}[\s.-]*\d{4}|1[5-8]\d{2}[\s.-]*\d{4})(?!\d)/);
+  if (m) {
+    const d = m[0].replace(/\D/g, "");
+    if (/^1[5-8]\d{6}$/.test(d)) return `${d.slice(0, 4)}-${d.slice(4)}`;
+    const area = d.startsWith("02") ? 2 : 3;
+    const rest = d.slice(area);
+    if (rest.length === 7 || rest.length === 8) return `${d.slice(0, area)}-${rest.slice(0, -4)}-${rest.slice(-4)}`;
+  }
+  return s.replace(/\s*-\s*/g, "-").replace(/\s+/g, " ").trim();
 }
 
 /** names: { GHS01: "폭발성", … } 라벨 언어의 그림문자 이름 */
 export function normalizeGhsData(data, names) {
-  const hazards = sortStatements(data.hazardStatements);
+  const hazards = sortStatements(mergeContinuations(data.hazardStatements));
   const codes = hCodes(hazards);
   let pictograms = data.pictograms;
   if (codes.size) {
@@ -72,7 +99,7 @@ export function normalizeGhsData(data, names) {
     ...data,
     pictograms,
     hazardStatements: hazards,
-    precautionaryStatements: sortStatements(data.precautionaryStatements),
+    precautionaryStatements: sortStatements(mergeContinuations(data.precautionaryStatements)),
     emergencyPhone: normalizePhone(data.emergencyPhone),
   };
 }

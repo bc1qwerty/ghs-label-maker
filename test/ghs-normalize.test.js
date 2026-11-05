@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pictogramsFromH, sortStatements, normalizePhone, normalizeGhsData } from "../server/ghs-normalize.js";
+import { pictogramsFromH, sortStatements, normalizePhone, mergeContinuations, normalizeGhsData } from "../server/ghs-normalize.js";
 
 // MSDS 목록에서 경고표지를 만들며(2026-11-05) 찾은 것들을 AI 추출 경로에도 고정한다.
 
@@ -23,9 +23,26 @@ test("문구는 코드 번호순, 복합 코드는 앞 번호부터", () => {
   assert.deepEqual(got, ["P210 열", "P301 ?", "P301+P310 삼켰다면", "P501 폐기", "메모"]);
 });
 
-test("전화번호 하이픈 주변 띄어쓰기", () => {
-  assert.equal(normalizePhone("(031) 499 - 0394"), "(031) 499-0394");
+test("전화번호: 국내 번호는 첫 번호만 하이픈 표기, 아니면 띄어쓰기만", () => {
+  assert.equal(normalizePhone("(031) 499 - 0394"), "031-499-0394");
+  assert.equal(normalizePhone("0553455200"), "055-345-5200");
+  assert.equal(normalizePhone("0222713032"), "02-2271-3032");
+  assert.equal(normalizePhone("02.721.0800"), "02-721-0800");
+  assert.equal(normalizePhone("TEL : 043)536-0161, FAX : 043)536-0162"), "043-536-0161");
+  assert.equal(normalizePhone("080-727-7777 야간 : 070-7754-8699"), "080-727-7777");
+  assert.equal(normalizePhone("031-467-6114 건축기술1팀 서원평"), "031-467-6114");
+  assert.equal(normalizePhone("1588 - 0369"), "1588-0369");
+  assert.equal(normalizePhone("+82 43 645 8840"), "+82 43 645 8840");
   assert.equal(normalizePhone(null), null);
+});
+
+test("갈라진 문구: 코드 없는 뒷부분은 문장으로 끝나지 않은 앞 문구에 붙는다", () => {
+  assert.deepEqual(
+    mergeContinuations(["P377 가스 누출 화재", "누출을 안전하게 막을 수 없다면, 불을 끄려하지 마시오.", "P381 누출 시 모든 점화원을 제거하시오."]),
+    ["P377 가스 누출 화재: 누출을 안전하게 막을 수 없다면, 불을 끄려하지 마시오.", "P381 누출 시 모든 점화원을 제거하시오."],
+  );
+  assert.deepEqual(mergeContinuations(["P210 열을 피하시오.", "보관 메모"]), ["P210 열을 피하시오.", "보관 메모"]);
+  assert.deepEqual(mergeContinuations(["메모", "P210 열"]), ["메모", "P210 열"]);
 });
 
 test("normalizeGhsData: AI 가 붙인 우선순위 위반 느낌표를 버리고, 12개 넘는 P 를 자르지 않는다", () => {
