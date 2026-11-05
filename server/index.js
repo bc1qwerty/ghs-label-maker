@@ -935,6 +935,12 @@ for (const [route, title] of Object.entries(SPA_ROUTES)) {
   });
 }
 
+// 인쇄 전용 /print(src/pages/print-label.tsx). 라벨 데이터가 주소 # 뒤에 실려 오는 화면이라
+// 색인할 내용이 없다 — SPA_ROUTES(색인 대상)에 넣지 않고 200 + noindex 로만 준다.
+app.get("/print", (_req, res) => {
+  res.set("X-Robots-Tag", "noindex").sendFile(SHELL_PATH);
+});
+
 // 없는 경로 fallback.
 // ⚠ 200 이 아니라 404 로 준다. 실제 페이지(/, /index.html)는
 // 위의 express.static 이, SPA 라우트는 바로 위 화이트리스트가 처리한다 — 여기까지

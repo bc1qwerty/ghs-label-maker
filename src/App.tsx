@@ -18,6 +18,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/terms" component={Terms} />
       <Route path="/privacy" component={Privacy} />
+      {/* /print 는 server/index.js 에서 200+noindex 로 따로 준다(SPA_ROUTES 와 별개) */}
       <Route path="/print" component={PrintLabel} />
       <Route component={NotFound} />
     </Switch>
