@@ -166,7 +166,7 @@ export function GhsLabel({ data }: GhsLabelProps) {
           </div>
         </div>
 
-        {/* 오른쪽: 유해문구 + 예방조치문구 */}
+        {/* 오른쪽: 유해·위험 문구 */}
         <div
           style={{
             flex: 1,
@@ -218,55 +218,56 @@ export function GhsLabel({ data }: GhsLabelProps) {
             </div>
           )}
 
-          {/* 예방조치 문구 */}
-          {data.precautionaryStatements.length > 0 && (
-            <div
-              data-testid="label-precautionary-statements"
-              style={{
-                padding: "16px 20px",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 13,
-                  fontWeight: 800,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.08em",
-                  color: "#333",
-                  marginBottom: 8,
-                  borderBottom: "1.5px solid #333",
-                  paddingBottom: 4,
-                }}
-              >
-                {isKorean ? "예방조치 문구" : "Precautionary Statements"}
-              </div>
-              <div
-                style={{
-                  columnCount: data.precautionaryStatements.length > 6 ? 2 : 1,
-                  columnGap: 16,
-                }}
-              >
-                {data.precautionaryStatements.map((stmt, idx) => (
-                  <div
-                    key={idx}
-                    style={{
-                      fontSize: 12,
-                      lineHeight: 1.5,
-                      color: "#333",
-                      marginBottom: 3,
-                      breakInside: "avoid",
-                      paddingLeft: 8,
-                      borderLeft: "2px solid #bbb",
-                    }}
-                  >
-                    {stmt}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
+
+      {/* ── 2-1. 예방조치 문구: 전체 폭 ─────────────────────
+           예전에는 오른쪽 좁은 칸에 2단으로 들어가 줄바꿈이 잦았고, 그림문자 열 아래는
+           비어 있었다. 라벨 폭 전체를 쓰게 내려 여유를 만든다(2026-11-05). */}
+      {data.precautionaryStatements.length > 0 && (
+        <div
+          data-testid="label-precautionary-statements"
+          style={{ padding: "16px 24px", borderBottom: "4px solid #cc0000" }}
+        >
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 800,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              color: "#333",
+              marginBottom: 8,
+              borderBottom: "1.5px solid #333",
+              paddingBottom: 4,
+            }}
+          >
+            {isKorean ? "예방조치 문구" : "Precautionary Statements"}
+          </div>
+          <div
+            style={{
+              columnCount: data.precautionaryStatements.length > 4 ? 2 : 1,
+              columnGap: 24,
+            }}
+          >
+            {data.precautionaryStatements.map((stmt, idx) => (
+              <div
+                key={idx}
+                style={{
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                  color: "#333",
+                  marginBottom: 3,
+                  breakInside: "avoid",
+                  paddingLeft: 8,
+                  borderLeft: "2px solid #bbb",
+                }}
+              >
+                {stmt}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── 3. 하단 푸터: 공급자 정보 ───────────────────────── */}
       <div
