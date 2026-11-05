@@ -8,6 +8,7 @@ import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import Terms from "@/pages/terms";
 import Privacy from "@/pages/privacy";
+import PrintLabel from "@/pages/print-label";
 
 const queryClient = new QueryClient();
 
@@ -17,6 +18,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/terms" component={Terms} />
       <Route path="/privacy" component={Privacy} />
+      <Route path="/print" component={PrintLabel} />
       <Route component={NotFound} />
     </Switch>
   );

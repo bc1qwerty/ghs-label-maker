@@ -10,6 +10,7 @@ import { createDb } from "./db.js";
 import { PLANS, BATCH_MAX_FILES, calcBatchPrice, settlePayment, reconcilePendingPayments, recordUsage as recordUsageImpl, reserveCredits as reserveCreditsImpl, settlePaidUsage as settlePaidUsageImpl } from "./payments.js";
 import { complete, extractJson, llmStats } from "./llm.js";
 import { getClientIp } from "./client-ip.js";
+import { normalizeGhsData } from "./ghs-normalize.js";
 
 // Load .env from the working directory (node 22+ builtin). The VPS pm2
 // process used to depend on env vars captured at first `pm2 start` — a
@@ -470,7 +471,6 @@ Rules:
 - Search Section 2 for explicit pictograms first. Only infer from H-codes if none found.
 - Use STANDARD ${langLabel} H/P-statement text, not corrupted PDF text.
 - IMPORTANT: PDF text extraction often garbles Korean/CJK characters (e.g. "전"→"젂", "안"→"앆"). If you detect corrupted characters in ANY field (product name, supplier, laws, statements), correct them to the proper standard text. Never output garbled characters.
-- Max 12 precautionary statements.
 - Return ONLY valid JSON.`;
 
   await acquireAiSlot();
@@ -493,18 +493,19 @@ Rules:
 
     return {
       success: true,
-      data: {
+      data: normalizeGhsData({
         productName: String(ghsData.productName ?? ""),
         supplier: String(ghsData.supplier ?? ""),
         signalWord: String(ghsData.signalWord ?? signalWordWarning),
         pictograms,
         hazardStatements: Array.isArray(ghsData.hazardStatements) ? ghsData.hazardStatements.map(String) : [],
-        precautionaryStatements: Array.isArray(ghsData.precautionaryStatements) ? ghsData.precautionaryStatements.map(String).slice(0, 12) : [],
+        // 12개로 자르던 것을 없앴다(2026-11-05). 안내 없이 잘린 문구는 라벨에서 사라진다 — 많으면 라벨이 2단·축소로 담는다.
+        precautionaryStatements: Array.isArray(ghsData.precautionaryStatements) ? ghsData.precautionaryStatements.map(String) : [],
         casNumber: ghsData.casNumber ? String(ghsData.casNumber) : null,
         chemicalFormula: ghsData.chemicalFormula ? String(ghsData.chemicalFormula) : null,
         emergencyPhone: ghsData.emergencyPhone ? String(ghsData.emergencyPhone) : null,
         language,
-      },
+      }, picNames),
     };
   } catch (err) {
     console.error(`[GHS] API error for ${filename}:`, err.message);

@@ -29,7 +29,7 @@ rsync -az --delete -e ssh "$SRC/dist/" "$VPS:$DEST/dist/"
 echo "==> Syncing server files (no .env, no DB)"
 # ⚠서버 파일은 이름을 하나하나 적는다. 새 모듈을 만들면 여기에 추가하지 않는 한
 # 배포에서 빠지고, VPS 는 import 실패로 부팅조차 못 한다.
-SERVER_FILES=(index.js db.js payments.js llm.js client-ip.js)
+SERVER_FILES=(index.js db.js payments.js llm.js client-ip.js ghs-normalize.js)
 
 # ⚠그 "추가하는 걸 잊는" 사고를 사람 기억에 맡기지 않는다(2026-09-07 신설).
 # server/ 에 있는데 위 목록에 없는 .js 가 있으면 배포를 멈춘다. 목록에서 빠진
