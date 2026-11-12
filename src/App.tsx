@@ -4,24 +4,29 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sun, Moon } from "lucide-react";
-import NotFound from "@/pages/not-found";
-import Home from "@/pages/home";
-import Terms from "@/pages/terms";
-import Privacy from "@/pages/privacy";
-import PrintLabel from "@/pages/print-label";
+
+// 쪽마다 따로 받는다 — 한 묶음(412KB)이던 때는 약관·개인정보·인쇄 쪽도 홈의 라벨 도구 코드를
+// 통째로 받았다(그 쪽에서 안 쓰는 JS ~230KB, 2026-11-12). 셸(React·라우터·쿼리·UI)만 메인 묶음에.
+const Home = React.lazy(() => import("@/pages/home"));
+const Terms = React.lazy(() => import("@/pages/terms"));
+const Privacy = React.lazy(() => import("@/pages/privacy"));
+const PrintLabel = React.lazy(() => import("@/pages/print-label"));
+const NotFound = React.lazy(() => import("@/pages/not-found"));
 
 const queryClient = new QueryClient();
 
 function Router() {
   return (
-    <Switch>
-      <Route path="/" component={Home} />
-      <Route path="/terms" component={Terms} />
-      <Route path="/privacy" component={Privacy} />
-      {/* /print 는 server/index.js 에서 200+noindex 로 따로 준다(SPA_ROUTES 와 별개) */}
-      <Route path="/print" component={PrintLabel} />
-      <Route component={NotFound} />
-    </Switch>
+    <React.Suspense fallback={null}>
+      <Switch>
+        <Route path="/" component={Home} />
+        <Route path="/terms" component={Terms} />
+        <Route path="/privacy" component={Privacy} />
+        {/* /print 는 server/index.js 에서 200+noindex 로 따로 준다(SPA_ROUTES 와 별개) */}
+        <Route path="/print" component={PrintLabel} />
+        <Route component={NotFound} />
+      </Switch>
+    </React.Suspense>
   );
 }
 

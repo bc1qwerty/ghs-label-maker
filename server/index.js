@@ -941,6 +941,12 @@ app.get("/print", (_req, res) => {
   res.set("X-Robots-Tag", "noindex").sendFile(SHELL_PATH);
 });
 
+// 없는 API 경로는 JSON 404. 아래 catch-all 은 앱 셸 HTML 을 주는데, /api/* 를 부르는 쪽은 JSON 을
+// 기대한다(2026-11-12). GET 외 메서드도 여기서 받는다 — 안 그러면 Express 기본 «Cannot POST» HTML.
+app.all("/api/{*splat}", (_req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+
 // 없는 경로 fallback.
 // ⚠ 200 이 아니라 404 로 준다. 실제 페이지(/, /index.html)는
 // 위의 express.static 이, SPA 라우트는 바로 위 화이트리스트가 처리한다 — 여기까지
