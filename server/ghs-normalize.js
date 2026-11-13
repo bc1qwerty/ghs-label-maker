@@ -44,13 +44,16 @@ export function hCodes(statements) {
   return new Set(statements.flatMap((s) => codesOf(s).filter((c) => c.startsWith("H"))));
 }
 
-export function pictogramsFromH(codes) {
+// assumed: H 코드 밖에서 이미 확정된 그림문자(AI 가 명시한 것). 우선순위 판정에만 쓰고 결과에는 넣지 않는다 —
+// 부식성이 그쪽에서만 왔어도 2호(부식성이 피부·눈 자극성을 흡수)는 같게 적용돼야 한다.
+export function pictogramsFromH(codes, assumed = []) {
   const has = (list) => list.some((c) => codes.has(c));
   const out = Object.entries(H_TO_PICTOGRAM).filter(([, list]) => has(list)).map(([g]) => g);
+  const corrosive = out.includes("GHS05") || assumed.includes("GHS05");
   const need07 = !out.includes("GHS06") && (
     has(ALWAYS_07)
     || has(ACUTE_TOX4)
-    || (has(IRRITATION) && !out.includes("GHS05") && !codes.has("H334"))
+    || (has(IRRITATION) && !corrosive && !codes.has("H334"))
     || (has(SKIN_SENS) && !codes.has("H334"))
   );
   if (need07) out.push("GHS07");
@@ -122,7 +125,7 @@ export function normalizeGhsData(data, names, { danger } = {}) {
         && !(c === "GHS02" && flameOnlyFromH221) && !(c === "GHS01" && bombOnlyFromH205));
     // 제6조의2 ② 1호: 해골이 있으면 느낌표를 표시하지 않는다. derived 는 이미 그렇게 나오지만, 해골이 AI 가 명시한
     // 쪽(extra)에서만 온 경우에도 최종 집합에서 같은 규칙을 지킨다.
-    const merged = new Set([...derived, ...extra]);
+    const merged = new Set([...pictogramsFromH(codes, extra), ...extra]);
     if (merged.has("GHS06")) merged.delete("GHS07");
     pictograms = [...merged].sort().map((code) => ({ code, name: names[code] ?? code }));
   }

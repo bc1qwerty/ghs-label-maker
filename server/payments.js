@@ -218,8 +218,9 @@ export function refundStaleReservations(db, stmts) {
 
 /**
  * Settle a reserved paid request after extraction: record `success` usage rows
- * and refund the reserved-but-unused credits (reserved - success). Idempotent
- * per call; runs in one transaction.
+ * and refund the reserved-but-unused credits (reserved - success). Runs in one
+ * transaction. ⚠ NOT idempotent: 같은 예약으로 두 번 부르면 두 번째는 «예약 행 없음» 분기로 가서 success 만큼을
+ * 한 번 더 받는다. 호출부(index.js trackUsage)가 settled 플래그로 요청당 한 번만 부른다.
  */
 export function settlePaidUsage(db, stmts, pubkey, ip, reserved, success, reservationId) {
   const settle = db.transaction(() => {

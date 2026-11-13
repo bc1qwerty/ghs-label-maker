@@ -117,3 +117,16 @@ test("normalizeGhsData: 해골이 AI 가 명시한 쪽에서만 와도 최종 �
   }, {});
   assert.deepEqual(out.pictograms.map((p) => p.code), ["GHS06"]);
 });
+
+test("normalizeGhsData: 부식성이 AI 가 명시한 쪽에서만 와도 자극성의 느낌표는 흡수된다(제6조의2 ② 2호)", () => {
+  const base = { signalWord: "Warning", precautionaryStatements: [] };
+  const codesOf = (o) => o.pictograms.map((p) => p.code);
+  // 자극성(H315·H319)뿐 → 부식성만 남는다
+  assert.deepEqual(codesOf(normalizeGhsData({ ...base, pictograms: [{ code: "GHS05", name: "c" }], hazardStatements: ["H315 skin", "H319 eye"] }, {})), ["GHS05"]);
+  // 느낌표의 근거가 자극성 말고 더 있으면(H302·H335·H317) 2호가 흡수하지 못한다 → 둘 다
+  for (const h of ["H302 swallowed", "H335 respiratory irritation", "H317 allergic skin reaction"]) {
+    assert.deepEqual(codesOf(normalizeGhsData({ ...base, pictograms: [{ code: "GHS05", name: "c" }], hazardStatements: ["H315 skin", h] }, {})), ["GHS05", "GHS07"]);
+  }
+  // 부식성이 없으면 자극성은 느낌표다
+  assert.deepEqual(codesOf(normalizeGhsData({ ...base, pictograms: [], hazardStatements: ["H315 skin"] }, {})), ["GHS07"]);
+});
