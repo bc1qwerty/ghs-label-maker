@@ -2,14 +2,17 @@
 // 같은 규칙을 MSDS 목록(~/projects/msds, msds.py)의 경고표지 생성도 쓴다 — 한쪽만 고치지 말 것.
 
 // H 코드 → 그림문자. 느낌표(GHS07)는 아래 우선순위로 따로 정한다.
+// 근거: 「화학물질의 분류·표시 및 물질안전보건자료에 관한 기준」 별표 2(고시 제2026-26호, 2026-11-13 대조).
+//   ⚠ H221(인화성 가스 구분 2)은 그림문자 «없음» — UN GHS 판에 따라 불꽃을 붙이기도 하지만 국내 표는 없다.
+//   H232(자연발화성 가스)는 불꽃, H305(흡인 유해성 구분 2)는 건강 유해성(구분 1 의 H304 와 같다).
 const H_TO_PICTOGRAM = {
   GHS01: ["H200", "H201", "H202", "H203", "H204", "H205", "H240", "H241"],
-  GHS02: ["H220", "H221", "H222", "H223", "H224", "H225", "H226", "H228", "H241", "H242", "H250", "H251", "H252", "H260", "H261"],
+  GHS02: ["H220", "H222", "H223", "H224", "H225", "H226", "H228", "H232", "H241", "H242", "H250", "H251", "H252", "H260", "H261"],
   GHS03: ["H270", "H271", "H272"],
   GHS04: ["H280", "H281"],
   GHS05: ["H290", "H314", "H318"],
   GHS06: ["H300", "H301", "H310", "H311", "H330", "H331"],
-  GHS08: ["H304", "H334", "H340", "H341", "H350", "H351", "H360", "H361", "H370", "H371", "H372", "H373"],
+  GHS08: ["H304", "H305", "H334", "H340", "H341", "H350", "H351", "H360", "H361", "H370", "H371", "H372", "H373"],
   GHS09: ["H400", "H410", "H411"],
 };
 // UN GHS 1.4.10.5.3.1: 느낌표는 그것을 부른 H 코드가 다른 그림문자에 흡수되지 않을 때만 붙는다.
@@ -17,6 +20,15 @@ const ACUTE_TOX4 = ["H302", "H312", "H332"]; // 해골(GHS06)이 있으면 흡�
 const IRRITATION = ["H315", "H319"]; // 부식성(GHS05) 또는 호흡기 과민(H334)이 있으면 흡수
 const SKIN_SENS = ["H317"]; // 호흡기 과민(H334)이 있으면 흡수
 const ALWAYS_07 = ["H335", "H336", "H420"];
+
+// 신호어 «위험» 이 확정되는 H 코드(별표 2). 구분에 따라 위험·경고가 갈리는 코드(H228·H242·H261·H272)는
+// 코드만으로 정할 수 없어 넣지 않는다. 하나라도 있으면 신호어는 «위험» 이다 — «위험과 경고에 모두 해당되는 경우에는
+// "위험"만을 표시한다»(같은 고시 제6조의2 ③). AI 가 «경고» 를 냈거나 비웠어도 올린다(낮춰 표시하지 않게).
+export const DANGER_H = new Set([
+  "H200", "H201", "H202", "H203", "H205", "H220", "H222", "H224", "H225", "H232", "H240", "H241", "H250", "H251",
+  "H260", "H270", "H271", "H300", "H301", "H304", "H310", "H311", "H314", "H318", "H330", "H331", "H334", "H340",
+  "H350", "H360", "H370", "H372",
+]);
 
 const codesOf = (stmt) => (String(stmt).match(/[HP]\d{3}/g) || []);
 const codeKey = (stmt) => codesOf(stmt).map((c) => Number(c.slice(1)));
@@ -83,8 +95,8 @@ export function normalizePhone(phone) {
   return s.replace(/\s*-\s*/g, "-").replace(/\s+/g, " ").trim();
 }
 
-/** names: { GHS01: "폭발성", … } 라벨 언어의 그림문자 이름 */
-export function normalizeGhsData(data, names) {
+/** names: { GHS01: "폭발성", … } 라벨 언어의 그림문자 이름. danger: 라벨 언어의 «위험»(없으면 신호어를 손대지 않는다) */
+export function normalizeGhsData(data, names, { danger } = {}) {
   const hazards = sortStatements(mergeContinuations(data.hazardStatements));
   const codes = hCodes(hazards);
   let pictograms = data.pictograms;
@@ -92,11 +104,16 @@ export function normalizeGhsData(data, names) {
     // H 코드가 있으면 그림문자는 H 코드에서 정한다. AI 가 명시한 것 중 H 코드로 설명 안 되는
     // 느낌표는 우선순위 위반이라 버리고, 나머지는 놓친 H 코드가 있을 수 있어 남긴다.
     const derived = pictogramsFromH(codes);
-    const extra = data.pictograms.map((p) => p.code).filter((c) => c !== "GHS07" && !derived.includes(c));
+    // 불꽃의 근거가 H221(인화성 가스 구분 2, 그림문자 없음)뿐이면 AI 가 붙인 불꽃도 버린다.
+    const flameOnlyFromH221 = codes.has("H221") && !derived.includes("GHS02");
+    const extra = data.pictograms.map((p) => p.code)
+      .filter((c) => c !== "GHS07" && !derived.includes(c) && !(c === "GHS02" && flameOnlyFromH221));
     pictograms = [...new Set([...derived, ...extra])].sort().map((code) => ({ code, name: names[code] ?? code }));
   }
+  const signalWord = danger && [...codes].some((c) => DANGER_H.has(c)) ? danger : data.signalWord;
   return {
     ...data,
+    signalWord,
     pictograms,
     hazardStatements: hazards,
     precautionaryStatements: sortStatements(mergeContinuations(data.precautionaryStatements)),

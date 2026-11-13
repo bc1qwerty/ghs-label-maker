@@ -60,3 +60,33 @@ test("normalizeGhsData: AI 가 붙인 우선순위 위반 느낌표를 버리고
   assert.equal(out.precautionaryStatements[0], "P200 문구");
   assert.equal(out.emergencyPhone, "02-1234");
 });
+
+// 별표 2(「화학물질의 분류·표시 및 물질안전보건자료에 관한 기준」, 2026-11-13 원문 대조).
+test("그림문자: H221(인화성 가스 구분 2)은 그림문자 없음, H220 은 불꽃", () => {
+  assert.deepEqual(pictogramsFromH(new Set(["H221", "H280"])), ["GHS04"]);
+  assert.deepEqual(pictogramsFromH(new Set(["H220", "H280"])), ["GHS02", "GHS04"]);
+});
+
+test("그림문자: H305(흡인 유해성 구분 2)는 건강 유해성, H232(자연발화성 가스)는 불꽃", () => {
+  assert.deepEqual(pictogramsFromH(new Set(["H305"])), ["GHS08"]);
+  assert.deepEqual(pictogramsFromH(new Set(["H232"])), ["GHS02"]);
+});
+
+test("그림문자: H221 뿐인데 AI 가 불꽃을 붙였으면 버린다", () => {
+  const out = normalizeGhsData(
+    { signalWord: "경고", pictograms: [{ code: "GHS02" }, { code: "GHS04" }], hazardStatements: ["H221 인화성 가스", "H280 고압가스"], precautionaryStatements: [] },
+    { GHS02: "인화성", GHS04: "고압가스" }, { danger: "위험" });
+  assert.deepEqual(out.pictograms.map((p) => p.code), ["GHS04"]);
+});
+
+test("신호어: 위험이 확정되는 H 코드가 있으면 AI 가 «경고» 를 내도 «위험»(제6조의2 ③)", () => {
+  const base = { pictograms: [], precautionaryStatements: [] };
+  const ko = (h, s) => normalizeGhsData({ ...base, signalWord: s, hazardStatements: h }, {}, { danger: "위험" }).signalWord;
+  assert.equal(ko(["H225 고인화성 액체 및 증기", "H319 눈 자극"], "경고"), "위험");
+  assert.equal(ko(["H301 삼키면 유독함"], "경고"), "위험");
+  assert.equal(ko(["H226 인화성 액체 및 증기", "H319 눈 자극"], "경고"), "경고");
+  // 구분에 따라 갈리는 코드(H228)만 있으면 코드로 못 정한다 — AI 값을 둔다.
+  assert.equal(ko(["H228 인화성 고체"], "경고"), "경고");
+  // 영어 라벨은 그 언어의 단어로.
+  assert.equal(normalizeGhsData({ ...base, signalWord: "Warning", hazardStatements: ["H314 Causes severe skin burns"] }, {}, { danger: "Danger" }).signalWord, "Danger");
+});

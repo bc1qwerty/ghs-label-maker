@@ -6,10 +6,12 @@ interface GhsLabelProps {
   data: GhsData;
 }
 
+const DANGER_WORDS = new Set(["Danger", "위험", "危険", "危险", "Gefahr", "Peligro", "Perigo"]);
+
 export function GhsLabel({ data }: GhsLabelProps) {
   const isKorean = data.language === "ko";
-  const isDanger =
-    data.signalWord === "Danger" || data.signalWord === "위험";
+  // 서버 LANG_MAP 의 «위험» 단어들. 영·한만 보던 탓에 일·중·독·스·포 라벨의 «위험» 이 빨갛지 않았다.
+  const isDanger = DANGER_WORDS.has(data.signalWord);
 
   return (
     /* Width fixed at A4 (794px); height grows with content */

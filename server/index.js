@@ -505,7 +505,7 @@ Rules:
         chemicalFormula: ghsData.chemicalFormula ? String(ghsData.chemicalFormula) : null,
         emergencyPhone: ghsData.emergencyPhone ? String(ghsData.emergencyPhone) : null,
         language,
-      }, picNames),
+      }, picNames, { danger: signalWordDanger }),
     };
   } catch (err) {
     console.error(`[GHS] API error for ${filename}:`, err.message);
