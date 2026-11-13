@@ -59,7 +59,9 @@ export function createDb(dbPath) {
     getPayment: db.prepare("SELECT * FROM payments WHERE payment_hash = ?"),
     // 결제 후 모달이 닫혀 폴링이 죽은(paid-but-uncredited) 인보이스 재조정용.
     // 7일 창: 라이트닝 인보이스는 그 안에 만료되고, 전수 스캔을 피한다.
-    getPendingPayments: db.prepare("SELECT * FROM payments WHERE pubkey = ? AND status = 'pending' AND created_at > unixepoch() - 86400 * 7"),
+    getPendingPayments: db.prepare("SELECT * FROM payments WHERE pubkey = ? AND status = 'pending' AND created_at > unixepoch() - 86400 * 7 ORDER BY created_at DESC LIMIT 50"),
+    // Invoice expired and phoenixd confirmed it unpaid → it can never be paid; stop asking.
+    expirePayment: db.prepare("UPDATE payments SET status = 'expired' WHERE payment_hash = ? AND status = 'pending'"),
     // Conditional flip: only one caller can ever transition pending → paid.
     // Concurrent /api/payment/check polls used to double-credit via the old
     // unconditional UPDATE.

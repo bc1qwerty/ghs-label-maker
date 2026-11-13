@@ -160,12 +160,26 @@ export function recordUsage(db, stmts, pubkey, ip, count) {
  * never do. Called on /api/user reads (every login) with `isPaid(hash)`
  * asking phoenixd; reuses settlePayment so it stays idempotent.
  */
-export async function reconcilePendingPayments(db, stmts, plans, pubkey, isPaid) {
-  for (const payment of stmts.getPendingPayments.all(pubkey)) {
-    try {
-      if (await isPaid(payment.payment_hash)) settlePayment(db, stmts, plans, payment);
-    } catch { /* phoenixd 불가 — 다음 조회에서 재시도 */ }
-  }
+// phoenixd 인보이스는 만료 시간을 주지 않으면 1시간짜리다(createinvoice 기본값). 여유를 두고
+// 2시간이 지나서도 미결제로 확인된 인보이스는 앞으로도 결제될 수 없다.
+const INVOICE_DEAD_AFTER_SEC = 2 * 3600;
+const RECONCILE_CONCURRENCY = 5;
+
+export async function reconcilePendingPayments(db, stmts, plans, pubkey, isPaid, nowSec = Math.floor(Date.now() / 1000)) {
+  const pending = stmts.getPendingPayments.all(pubkey);
+  // 예전엔 7일치 pending 을 조회 때마다 전부, 하나씩 phoenixd 에 물었다 — 인보이스를 쌓아 둔
+  // 계정은 잔액 조회가 그만큼 느려졌다. 몇 개씩 나란히 묻고, 죽은 인보이스는 한 번 확인한 뒤 닫는다.
+  let next = 0;
+  const worker = async () => {
+    while (next < pending.length) {
+      const payment = pending[next++];
+      try {
+        if (await isPaid(payment.payment_hash)) settlePayment(db, stmts, plans, payment);
+        else if (nowSec - payment.created_at > INVOICE_DEAD_AFTER_SEC) stmts.expirePayment.run(payment.payment_hash);
+      } catch { /* phoenixd 불가 — 다음 조회에서 재시도 */ }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(RECONCILE_CONCURRENCY, pending.length) }, worker));
 }
 
 /**

@@ -351,7 +351,8 @@ async function phoenixdIsPaid(hash) {
     headers: { Authorization: phoenixdAuth() },
     signal: AbortSignal.timeout(10000),
   });
-  if (!resp.ok) return false;
+  // 오류 응답을 «미결제» 로 읽지 않는다 — reconcile 이 만료 지난 인보이스를 미결제로 확인하면 닫기 때문이다.
+  if (!resp.ok) throw new Error("phoenixd error: " + resp.status);
   const data = await resp.json();
   return !!data.isPaid;
 }

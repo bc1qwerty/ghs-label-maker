@@ -321,3 +321,61 @@ test("trackUsage: 끊긴 뒤 핸들러가 끝내 세팅하지 않으면 유예 �
   req._usageCount = 1; // 뒤늦은 세팅은 다시 정산하지 않는다
   assert.deepEqual(calls, [0]);
 });
+
+test("reconcilePendingPayments: 만료가 지나 미결제로 확인된 인보이스는 닫고 다시 묻지 않는다", async () => {
+  const { db, stmts } = freshDb();
+  seedPayment(stmts, { plan: "pack50", hash: "h-dead" });
+  seedPayment(stmts, { plan: "pack50", hash: "h-fresh" });
+  db.exec("UPDATE payments SET created_at = unixepoch() - 3 * 3600 WHERE payment_hash = 'h-dead'");
+
+  let asked = [];
+  await reconcilePendingPayments(db, stmts, PLANS, "pk1", async (h) => { asked.push(h); return false; });
+  assert.deepEqual(asked.sort(), ["h-dead", "h-fresh"]);
+  assert.equal(stmts.getPayment.get("h-dead").status, "expired");
+  assert.equal(stmts.getPayment.get("h-fresh").status, "pending", "살아 있는 인보이스는 그대로");
+
+  asked = [];
+  await reconcilePendingPayments(db, stmts, PLANS, "pk1", async (h) => { asked.push(h); return false; });
+  assert.deepEqual(asked, ["h-fresh"]);
+});
+
+test("reconcilePendingPayments: 만료 지난 인보이스도 결제돼 있으면 정산하고, phoenixd 오류면 닫지 않는다", async () => {
+  const { db, stmts } = freshDb();
+  seedPayment(stmts, { plan: "pack50", hash: "h-late" });
+  db.exec("UPDATE payments SET created_at = unixepoch() - 3 * 86400 WHERE payment_hash = 'h-late'");
+
+  await reconcilePendingPayments(db, stmts, PLANS, "pk1", async () => { throw new Error("down"); });
+  assert.equal(stmts.getPayment.get("h-late").status, "pending");
+
+  await reconcilePendingPayments(db, stmts, PLANS, "pk1", async () => true);
+  assert.equal(stmts.getPayment.get("h-late").status, "paid");
+  assert.equal(stmts.getCredits.get("pk1").amount, 50);
+});
+
+test("reconcilePendingPayments: 동시에 묻는 수는 5 를 넘지 않는다", async () => {
+  const { db, stmts } = freshDb();
+  for (let i = 0; i < 12; i++) seedPayment(stmts, { plan: "pack50", hash: `h-${i}` });
+  let live = 0, peak = 0, asked = 0;
+  await reconcilePendingPayments(db, stmts, PLANS, "pk1", async () => {
+    asked++; live++; peak = Math.max(peak, live);
+    await new Promise((r) => setTimeout(r, 5));
+    live--; return false;
+  });
+  assert.equal(asked, 12);
+  assert.ok(peak <= 5, `peak ${peak}`);
+});
+
+test("혼합: 크레딧 1 + 무료 잔여 3 에 2파일 → 예약은 실패하고 잔액 그대로, 무료 2건으로 처리", () => {
+  // checkUsage 의 순서(예약 시도 → 무료 한도 → 402)를 함수 수준에서 고정한다.
+  const { db, stmts } = freshDb();
+  seedCredits(stmts, "pk1", 1, "payg");
+  assert.equal(reserveCredits(db, stmts, "pk1", 2), false);
+  assert.equal(stmts.getCredits.get("pk1").amount, 1, "실패한 예약은 부분 차감하지 않는다");
+  recordUsage(db, stmts, "pk1", "1.2.3.4", 2);
+  assert.equal(stmts.getCredits.get("pk1").amount, 1);
+  assert.equal(stmts.countByPubkey.get("pk1").cnt, 2);
+  // 무료 3건을 다 쓴 뒤의 2파일은 크레딧 1 로도 못 덮는다 → 402 «크레딧 1개인데 파일 2개» 경로
+  recordUsage(db, stmts, "pk1", "1.2.3.4", 1);
+  assert.equal(reserveCredits(db, stmts, "pk1", 2), false);
+  assert.equal(reserveCredits(db, stmts, "pk1", 1), true, "1파일이면 유료로 통과");
+});
