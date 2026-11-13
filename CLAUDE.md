@@ -27,6 +27,7 @@ GHS (Globally Harmonized System) hazard label generator. Full-stack app with a R
 ## Build & Run
 ```bash
 npm run dev       # Vite dev server (port 5173, proxies /api to :3100)
+                  # API 서버는 ALLOW_DEV_ORIGINS=1 npm run server — 상태를 바꾸는 /api 요청은 Origin 을 검사한다
 npm run server    # Express backend (port 3100)
 npm run build     # Production build
 npm run start     # Build + start server

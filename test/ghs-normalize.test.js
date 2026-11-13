@@ -9,6 +9,17 @@ test("느낌표: 해골이 있으면 급성독성4 의 느낌표는 빠진다", 
   assert.deepEqual(pictogramsFromH(new Set(["H302"])), ["GHS07"]);
 });
 
+test("느낌표: 해골이 있으면 이유가 무엇이든 느낌표는 붙지 않는다(고시 제6조의2 ② 1호)", () => {
+  assert.deepEqual(pictogramsFromH(new Set(["H301", "H315", "H335"])), ["GHS06"]);
+  assert.deepEqual(pictogramsFromH(new Set(["H331", "H317"])), ["GHS06"]);
+  assert.deepEqual(pictogramsFromH(new Set(["H311", "H336", "H420"])), ["GHS06"]);
+});
+
+test("느낌표: 호흡기 과민이 있으면 피부·눈 자극의 느낌표도 빠진다(3호), H335 는 남는다", () => {
+  assert.deepEqual(pictogramsFromH(new Set(["H334", "H315", "H319"])), ["GHS08"]);
+  assert.deepEqual(pictogramsFromH(new Set(["H334", "H315", "H335"])), ["GHS07", "GHS08"]);
+});
+
 test("느낌표: 부식성이 있으면 피부·눈 자극의 느낌표는 빠지지만 H335 는 남는다", () => {
   assert.deepEqual(pictogramsFromH(new Set(["H318", "H315"])), ["GHS05"]);
   assert.deepEqual(pictogramsFromH(new Set(["H318", "H315", "H335"])), ["GHS05", "GHS07"]);

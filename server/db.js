@@ -35,6 +35,14 @@ export function createDb(dbPath) {
       data TEXT,
       created_at INTEGER DEFAULT (unixepoch())
     );
+    -- 추출이 끝나기 전에 잡아 둔 유료 크레딧. 정산되면 지운다 — 기동 때 남아 있는 행은
+    -- 앞 프로세스가 정산하지 못하고 죽은 예약이라 환급한다(payments.js refundStaleReservations).
+    CREATE TABLE IF NOT EXISTS reservations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pubkey TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      created_at INTEGER DEFAULT (unixepoch())
+    );
     CREATE INDEX IF NOT EXISTS idx_usage_pubkey ON usage(pubkey);
     CREATE INDEX IF NOT EXISTS idx_usage_ip ON usage(ip);
     CREATE INDEX IF NOT EXISTS idx_history_pubkey ON history(pubkey);
@@ -55,6 +63,10 @@ export function createDb(dbPath) {
     reserveCredits: db.prepare("UPDATE credits SET amount = amount - ? WHERE pubkey = ? AND amount >= ? AND plan != 'free'"),
     // 추출 실패분(예약했으나 못 쓴 크레딧) 환급.
     refundCredits: db.prepare("UPDATE credits SET amount = amount + ? WHERE pubkey = ?"),
+    openReservation: db.prepare("INSERT INTO reservations (pubkey, amount) VALUES (?, ?)"),
+    closeReservation: db.prepare("DELETE FROM reservations WHERE id = (SELECT id FROM reservations WHERE pubkey = ? AND amount = ? ORDER BY id LIMIT 1)"),
+    listReservations: db.prepare("SELECT id, pubkey, amount FROM reservations"),
+    clearReservations: db.prepare("DELETE FROM reservations"),
     createPayment: db.prepare("INSERT INTO payments (pubkey, payment_hash, amount_sats, plan) VALUES (?, ?, ?, ?)"),
     getPayment: db.prepare("SELECT * FROM payments WHERE payment_hash = ?"),
     // 결제 후 모달이 닫혀 폴링이 죽은(paid-but-uncredited) 인보이스 재조정용.
@@ -64,8 +76,9 @@ export function createDb(dbPath) {
     expirePayment: db.prepare("UPDATE payments SET status = 'expired' WHERE payment_hash = ? AND status = 'pending'"),
     // Conditional flip: only one caller can ever transition pending → paid.
     // Concurrent /api/payment/check polls used to double-credit via the old
-    // unconditional UPDATE.
-    completePayment: db.prepare("UPDATE payments SET status = 'paid' WHERE payment_hash = ? AND status = 'pending'"),
+    // unconditional UPDATE. 'expired' 도 받는다 — 닫은 뒤에 결제가 확인되면(phoenixd 가 늦게 받아 줬거나
+    // 닫는 판정이 일렀던 경우) 돈만 받고 크레딧을 안 주는 일이 없어야 한다. paid → paid 는 여전히 불가.
+    completePayment: db.prepare("UPDATE payments SET status = 'paid' WHERE payment_hash = ? AND status IN ('pending', 'expired')"),
     saveHistory: db.prepare("INSERT INTO history (pubkey, mode, filename, data) VALUES (?, ?, ?, ?)"),
     getHistory: db.prepare("SELECT id, mode, filename, created_at FROM history WHERE pubkey = ? ORDER BY created_at DESC LIMIT 100"),
     getHistoryItem: db.prepare("SELECT * FROM history WHERE id = ? AND pubkey = ?"),

@@ -17,8 +17,13 @@ const H_TO_PICTOGRAM = {
   GHS08: ["H304", "H305", "H334", "H340", "H341", "H350", "H351", "H360", "H361", "H370", "H371", "H372", "H373"],
   GHS09: ["H400", "H410", "H411"],
 };
-// UN GHS 1.4.10.5.3.1: 느낌표는 그것을 부른 H 코드가 다른 그림문자에 흡수되지 않을 때만 붙는다.
-const ACUTE_TOX4 = ["H302", "H312", "H332"]; // 해골(GHS06)이 있으면 흡수
+// 그림문자 우선순위 — 같은 고시 제6조의2 ②:
+//   1호 «해골과 Ⅹ자형 뼈» 와 «감탄부호(!)» 에 모두 해당되면 해골만 표시한다. 급성 독성 구분 4 뿐 아니라
+//       느낌표를 부른 이유가 무엇이든(H335·H315 등) 해골이 있으면 느낌표는 붙이지 않는다.
+//   2호 부식성과 피부·눈 자극성에 모두 해당되면 부식성만 — 자극성(H315·H319)은 느낌표를 부르지 못한다.
+//   3호 호흡기 과민성과 피부 과민성·피부 자극성·눈 자극성에 모두 해당되면 호흡기 과민성만.
+//   4호(5개 이상이면 4개만 «표시할 수 있다»)는 선택 규정이라 적용하지 않는다.
+const ACUTE_TOX4 = ["H302", "H312", "H332"];
 const IRRITATION = ["H315", "H319"]; // 부식성(GHS05) 또는 호흡기 과민(H334)이 있으면 흡수
 const SKIN_SENS = ["H317"]; // 호흡기 과민(H334)이 있으면 흡수
 const ALWAYS_07 = ["H335", "H336", "H420"];
@@ -42,10 +47,12 @@ export function hCodes(statements) {
 export function pictogramsFromH(codes) {
   const has = (list) => list.some((c) => codes.has(c));
   const out = Object.entries(H_TO_PICTOGRAM).filter(([, list]) => has(list)).map(([g]) => g);
-  const need07 = has(ALWAYS_07)
-    || (has(ACUTE_TOX4) && !out.includes("GHS06"))
+  const need07 = !out.includes("GHS06") && (
+    has(ALWAYS_07)
+    || has(ACUTE_TOX4)
     || (has(IRRITATION) && !out.includes("GHS05") && !codes.has("H334"))
-    || (has(SKIN_SENS) && !codes.has("H334"));
+    || (has(SKIN_SENS) && !codes.has("H334"))
+  );
   if (need07) out.push("GHS07");
   return out.sort();
 }

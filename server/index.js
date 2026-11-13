@@ -7,7 +7,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
 import { createDb } from "./db.js";
-import { PLANS, isValidBatchCount, trackUsage, calcBatchPrice, settlePayment, reconcilePendingPayments, recordUsage as recordUsageImpl, reserveCredits as reserveCreditsImpl, settlePaidUsage as settlePaidUsageImpl } from "./payments.js";
+import { PLANS, isValidBatchCount, trackUsage, calcBatchPrice, settlePayment, reconcilePendingPayments, recordUsage as recordUsageImpl, reserveCredits as reserveCreditsImpl, settlePaidUsage as settlePaidUsageImpl, refundStaleReservations } from "./payments.js";
 import { complete, extractJson, llmStats } from "./llm.js";
 import { getClientIp } from "./client-ip.js";
 import { normalizeGhsData } from "./ghs-normalize.js";
@@ -26,6 +26,10 @@ const PORT = process.env.PORT || 3100;
 
 // ─── Database ───
 const { db, stmts } = createDb(path.join(__dirname, "ghs.db"));
+{
+  const refunded = refundStaleReservations(db, stmts);
+  if (refunded) console.log(`[GHS] 앞 프로세스가 정산하지 못한 예약 ${refunded}건을 환급했다`);
+}
 
 // stmts come from createDb (server/db.js).
 
@@ -73,6 +77,15 @@ app.use(cors({
   origin: ALLOWED_ORIGINS,
   credentials: true,
 }));
+// 상태를 바꾸는 요청은 우리 화면에서 온 것만 받는다. 쿠키가 SameSite=Lax; Domain=.txid.uk 라 바깥 사이트는
+// 막히지만, 같은 사이트인 다른 txid.uk 서브도메인의 multipart POST 는 preflight 없이 쿠키를 싣고 온다
+// (→ 피해자 크레딧으로 추출). Origin 이 없는 요청(curl·서버 간 호출)은 브라우저 공격 경로가 아니라 통과.
+app.use("/api", (req, res, next) => {
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+  const origin = req.headers.origin;
+  if (origin && !ALLOWED_ORIGINS.includes(origin)) return res.status(403).json({ error: "Forbidden origin" });
+  next();
+});
 app.use(express.json());
 // Vite 산출물 /assets/* 는 파일명에 콘텐츠 해시가 있어 내용이 바뀌면 이름도 바뀐다 —
 // 1년 immutable 로 두면 재방문마다 에셋마다 재검증 왕복이 없다(CF 없이 Caddy 직결이라
@@ -313,7 +326,7 @@ app.post("/api/payment/create-batch", express.json(), requireAuth, async (req, r
 app.post("/api/payment/create", express.json(), requireAuth, async (req, res) => {
   const { plan } = req.body;
   const pubkey = req.verifiedPubkey;
-  if (!PLANS[plan]) return res.status(400).json({ error: "Invalid plan" });
+  if (typeof plan !== "string" || !Object.hasOwn(PLANS, plan)) return res.status(400).json({ error: "Invalid plan" });
   if (!PHOENIXD_PASSWORD) return res.status(503).json({ error: "Payment not configured" });
 
   const { sats, label } = PLANS[plan];

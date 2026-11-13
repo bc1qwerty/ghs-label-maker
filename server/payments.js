@@ -105,7 +105,7 @@ export function settlePayment(db, stmts, plans, payment) {
       // unreservable (paid but unusable) after a plan-expiry reset.
       planName = existing && existing.plan !== "free" ? existing.plan : "payg";
     } else {
-      const plan = plans[payment.plan];
+      const plan = Object.hasOwn(plans, payment.plan) ? plans[payment.plan] : null;
       if (!plan) {
         // ⚠ 여기 오면 **사용자는 돈을 냈는데 크레딧이 0**이다. completePayment 는
         // 위에서 이미 pending → paid 로 넘겼고, return 은 예외가 아니라서
@@ -189,7 +189,22 @@ export async function reconcilePendingPayments(db, stmts, plans, pubkey, isPaid,
  * only when the balance covered it (changes===1). Free packs are excluded.
  */
 export function reserveCredits(db, stmts, pubkey, n) {
-  return stmts.reserveCredits.run(n, pubkey, n).changes === 1;
+  return db.transaction(() => {
+    if (stmts.reserveCredits.run(n, pubkey, n).changes !== 1) return false;
+    // 예약을 DB 에도 남긴다 — 정산 전에 프로세스가 죽으면(배포 재시작 포함) 기동 때 환급하기 위해서다.
+    stmts.openReservation.run(pubkey, n);
+    return true;
+  })();
+}
+
+/** 기동 때 한 번: 앞 프로세스가 정산하지 못한 예약을 전액 환급한다. 이 시점엔 처리 중인 요청이 없다. */
+export function refundStaleReservations(db, stmts) {
+  return db.transaction(() => {
+    const rows = stmts.listReservations.all();
+    for (const r of rows) stmts.refundCredits.run(r.amount, r.pubkey);
+    stmts.clearReservations.run();
+    return rows.length;
+  })();
 }
 
 /**
@@ -202,6 +217,7 @@ export function settlePaidUsage(db, stmts, pubkey, ip, reserved, success) {
     for (let i = 0; i < success; i++) stmts.recordUsage.run(pubkey, ip);
     const refund = reserved - success;
     if (refund > 0) stmts.refundCredits.run(refund, pubkey);
+    stmts.closeReservation.run(pubkey, reserved);
   });
   settle();
 }

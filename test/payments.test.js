@@ -379,3 +379,65 @@ test("혼합: 크레딧 1 + 무료 잔여 3 에 2파일 → 예약은 실패하�
   assert.equal(reserveCredits(db, stmts, "pk1", 2), false);
   assert.equal(reserveCredits(db, stmts, "pk1", 1), true, "1파일이면 유료로 통과");
 });
+
+import { refundStaleReservations } from "../server/payments.js";
+
+test("예약은 DB 에 남고 정산되면 지워진다", () => {
+  const { db, stmts } = createDb(":memory:");
+  stmts.upsertCredits.run("pk", 5, "payg", 0, 5, "payg", 0);
+  assert.equal(reserveCredits(db, stmts, "pk", 2), true);
+  assert.equal(stmts.listReservations.all().length, 1);
+  settlePaidUsage(db, stmts, "pk", "1.1.1.1", 2, 1);
+  assert.equal(stmts.listReservations.all().length, 0);
+  assert.equal(stmts.getCredits.get("pk").amount, 4);
+});
+
+test("예약 실패는 행을 남기지 않는다", () => {
+  const { db, stmts } = createDb(":memory:");
+  stmts.upsertCredits.run("pk", 1, "payg", 0, 1, "payg", 0);
+  assert.equal(reserveCredits(db, stmts, "pk", 2), false);
+  assert.equal(stmts.listReservations.all().length, 0);
+});
+
+test("refundStaleReservations: 앞 프로세스가 못 끝낸 예약을 기동 때 전액 환급, 두 번 불러도 한 번만", () => {
+  const { db, stmts } = createDb(":memory:");
+  stmts.upsertCredits.run("a", 5, "payg", 0, 5, "payg", 0);
+  stmts.upsertCredits.run("b", 3, "payg", 0, 3, "payg", 0);
+  reserveCredits(db, stmts, "a", 2);
+  reserveCredits(db, stmts, "a", 1);
+  reserveCredits(db, stmts, "b", 3);
+  assert.equal(refundStaleReservations(db, stmts), 3);
+  assert.equal(stmts.getCredits.get("a").amount, 5);
+  assert.equal(stmts.getCredits.get("b").amount, 3);
+  assert.equal(refundStaleReservations(db, stmts), 0);
+  assert.equal(stmts.getCredits.get("a").amount, 5);
+});
+
+test("같은 계정의 같은 크기 예약 둘: 정산은 하나씩만 닫는다", () => {
+  const { db, stmts } = createDb(":memory:");
+  stmts.upsertCredits.run("pk", 4, "payg", 0, 4, "payg", 0);
+  reserveCredits(db, stmts, "pk", 2);
+  reserveCredits(db, stmts, "pk", 2);
+  settlePaidUsage(db, stmts, "pk", "1.1.1.1", 2, 2);
+  assert.equal(stmts.listReservations.all().length, 1);
+});
+
+test("settlePayment: 닫힌(expired) 인보이스도 결제가 확인되면 적립한다 — paid 는 다시 못 넘긴다", () => {
+  const { db, stmts } = createDb(":memory:");
+  stmts.createPayment.run("pk", "h-exp", 100, "single");
+  stmts.expirePayment.run("h-exp");
+  const payment = stmts.getPayment.get("h-exp");
+  assert.equal(payment.status, "expired");
+  assert.equal(settlePayment(db, stmts, PLANS, payment).credits, 1);
+  assert.equal(stmts.getPayment.get("h-exp").status, "paid");
+  assert.equal(settlePayment(db, stmts, PLANS, payment), null);
+  assert.equal(stmts.getCredits.get("pk").amount, 1);
+});
+
+test("settlePayment: 프로토타입 키(constructor 등)는 plan 이 아니다", () => {
+  const { db, stmts } = createDb(":memory:");
+  stmts.createPayment.run("pk", "h-proto", 100, "constructor");
+  const r = settlePayment(db, stmts, PLANS, stmts.getPayment.get("h-proto"));
+  assert.equal(r.credits, 0);
+  assert.equal(stmts.getCredits.get("pk"), undefined);
+});
