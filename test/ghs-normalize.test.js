@@ -108,3 +108,12 @@ test("H205(등급 1.5)는 폭탄 그림문자를 부르지 않는다", () => {
   assert.deepEqual(pictogramsFromH(new Set(["H204"])), ["GHS01"]);
   assert.equal(DANGER_H.has("H205"), true);
 });
+
+test("normalizeGhsData: 해골이 AI 가 명시한 쪽에서만 와도 최종 집합에서 느낌표는 빠진다(제6조의2 ② 1호)", () => {
+  const out = normalizeGhsData({
+    pictograms: [{ code: "GHS06", name: "x" }, { code: "GHS07", name: "y" }],
+    hazardStatements: ["H315 피부에 자극을 일으킴"], // H 코드로는 느낌표만 나온다
+    precautionaryStatements: [], signalWord: "경고", emergencyPhone: "",
+  }, {});
+  assert.deepEqual(out.pictograms.map((p) => p.code), ["GHS06"]);
+});

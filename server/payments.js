@@ -175,7 +175,7 @@ export async function reconcilePendingPayments(db, stmts, plans, pubkey, isPaid,
       const payment = pending[next++];
       try {
         if (await isPaid(payment.payment_hash)) settlePayment(db, stmts, plans, payment);
-        else if (nowSec - payment.created_at > INVOICE_DEAD_AFTER_SEC) stmts.expirePayment.run(payment.payment_hash);
+        else if (payment.status === "pending" && nowSec - payment.created_at > INVOICE_DEAD_AFTER_SEC) stmts.expirePayment.run(payment.payment_hash);
       } catch { /* phoenixd 불가 — 다음 조회에서 재시도 */ }
     }
   };
@@ -189,15 +189,24 @@ export async function reconcilePendingPayments(db, stmts, plans, pubkey, isPaid,
  * only when the balance covered it (changes===1). Free packs are excluded.
  */
 export function reserveCredits(db, stmts, pubkey, n) {
+  return reserve(db, stmts, pubkey, n) !== 0;
+}
+
+/** reserveCredits 와 같되 예약 행의 id 를 돌려준다(실패면 0). 정산은 이 id 로 한다 — settlePaidUsage 참고. */
+export function reserve(db, stmts, pubkey, n) {
   return db.transaction(() => {
-    if (stmts.reserveCredits.run(n, pubkey, n).changes !== 1) return false;
+    if (stmts.reserveCredits.run(n, pubkey, n).changes !== 1) return 0;
     // 예약을 DB 에도 남긴다 — 정산 전에 프로세스가 죽으면(배포 재시작 포함) 기동 때 환급하기 위해서다.
-    stmts.openReservation.run(pubkey, n);
-    return true;
+    return Number(stmts.openReservation.run(pubkey, n).lastInsertRowid);
   })();
 }
 
-/** 기동 때 한 번: 앞 프로세스가 정산하지 못한 예약을 전액 환급한다. 이 시점엔 처리 중인 요청이 없다. */
+/**
+ * 기동 때 한 번: 앞 프로세스가 정산하지 못한 예약을 전액 환급한다.
+ * ⚠ «이 시점엔 처리 중인 요청이 없다» 는 전제는 프로세스가 하나일 때만 선다. 같은 DB 에 두 번째 프로세스가 뜨면
+ *   (실수로 한 번 더 띄움·reload) 살아 있는 요청의 예약까지 환급한다 — 그래서 정산(settlePaidUsage)이 예약 행이
+ *   아직 있는지를 보고, 이미 환급된 예약이면 환급하지 않고 성공분을 다시 받는다.
+ */
 export function refundStaleReservations(db, stmts) {
   return db.transaction(() => {
     const rows = stmts.listReservations.all();
@@ -212,12 +221,20 @@ export function refundStaleReservations(db, stmts) {
  * and refund the reserved-but-unused credits (reserved - success). Idempotent
  * per call; runs in one transaction.
  */
-export function settlePaidUsage(db, stmts, pubkey, ip, reserved, success) {
+export function settlePaidUsage(db, stmts, pubkey, ip, reserved, success, reservationId) {
   const settle = db.transaction(() => {
     for (let i = 0; i < success; i++) stmts.recordUsage.run(pubkey, ip);
-    const refund = reserved - success;
-    if (refund > 0) stmts.refundCredits.run(refund, pubkey);
-    stmts.closeReservation.run(pubkey, reserved);
+    // 예약 행을 지운 쪽만 환급한다. 행이 없으면 다른 누군가(기동 환급)가 이미 전액 돌려준 것이므로,
+    // 여기서 또 환급하면 두 번이다 — 대신 실제로 쓴 만큼(success)을 다시 받는다.
+    const closed = reservationId
+      ? stmts.closeReservationById.run(reservationId).changes === 1
+      : stmts.closeReservation.run(pubkey, reserved).changes === 1;
+    if (closed) {
+      const refund = reserved - success;
+      if (refund > 0) stmts.refundCredits.run(refund, pubkey);
+    } else if (success > 0) {
+      stmts.chargeCredits.run(success, pubkey);
+    }
   });
   settle();
 }

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDb } from "../server/db.js";
-import { PLANS, calcBatchPrice, settlePayment, reconcilePendingPayments, recordUsage, reserveCredits, settlePaidUsage } from "../server/payments.js";
+import { PLANS, calcBatchPrice, settlePayment, reconcilePendingPayments, recordUsage, reserveCredits, reserve, settlePaidUsage } from "../server/payments.js";
 
 // Payment/credit core paths against an in-memory DB with the exact
 // production schema + statements. No network, no Lightning.
@@ -326,7 +326,7 @@ test("reconcilePendingPayments: 만료가 지나 미결제로 확인된 인보�
   const { db, stmts } = freshDb();
   seedPayment(stmts, { plan: "pack50", hash: "h-dead" });
   seedPayment(stmts, { plan: "pack50", hash: "h-fresh" });
-  db.exec("UPDATE payments SET created_at = unixepoch() - 3 * 3600 WHERE payment_hash = 'h-dead'");
+  db.exec("UPDATE payments SET created_at = unixepoch() - 7 * 3600 WHERE payment_hash = 'h-dead'");
 
   let asked = [];
   await reconcilePendingPayments(db, stmts, PLANS, "pk1", async (h) => { asked.push(h); return false; });
@@ -440,4 +440,57 @@ test("settlePayment: 프로토타입 키(constructor 등)는 plan 이 아니다"
   const r = settlePayment(db, stmts, PLANS, stmts.getPayment.get("h-proto"));
   assert.equal(r.credits, 0);
   assert.equal(stmts.getCredits.get("pk"), undefined);
+});
+
+test("reconcilePendingPayments: 닫은 지 얼마 안 된(만든 지 6시간 안) 인보이스는 한 번 더 보고, 결제돼 있으면 정산한다", async () => {
+  const { db, stmts } = freshDb();
+  seedPayment(stmts, { plan: "pack50", hash: "h-closed" });
+  db.exec("UPDATE payments SET created_at = unixepoch() - 3 * 3600 WHERE payment_hash = 'h-closed'");
+  await reconcilePendingPayments(db, stmts, PLANS, "pk1", async () => false);
+  assert.equal(stmts.getPayment.get("h-closed").status, "expired");
+
+  // 아직 6시간 안: 다시 묻는다. 미결제면 expired 그대로(다시 닫는 쓰기는 없다).
+  let asked = 0;
+  await reconcilePendingPayments(db, stmts, PLANS, "pk1", async () => { asked++; return false; });
+  assert.equal(asked, 1);
+  assert.equal(stmts.getPayment.get("h-closed").status, "expired");
+
+  // 결제가 확인되면 열린 결제창 없이도 정산된다 — 한 번만.
+  await reconcilePendingPayments(db, stmts, PLANS, "pk1", async () => true);
+  assert.equal(stmts.getPayment.get("h-closed").status, "paid");
+  const after = stmts.getCredits.get("pk1").amount;
+  await reconcilePendingPayments(db, stmts, PLANS, "pk1", async () => true);
+  assert.equal(stmts.getCredits.get("pk1").amount, after, "paid 는 다시 적립하지 않는다");
+});
+
+// 같은 DB 에 두 번째 프로세스가 뜨면 기동 환급이 살아 있는 요청의 예약을 돌려준다. 그 요청이 끝나며 또 환급하면
+// 두 번이다(잔액 10 → 예약 5 → 기동 환급 → 정산 환급 = 15, 3차 감사 재현).
+test("settlePaidUsage: 예약이 이미 환급됐으면 다시 환급하지 않고 성공분을 받는다", () => {
+  const { db, stmts } = freshDb();
+  stmts.upsertCredits.run("pk1", 10, "pack50", 0, 10, "pack50", 0);
+  const id = reserve(db, stmts, "pk1", 5);
+  assert.ok(id > 0);
+  assert.equal(stmts.getCredits.get("pk1").amount, 5);
+  assert.equal(refundStaleReservations(db, stmts), 1); // 다른 프로세스의 기동 환급
+  assert.equal(stmts.getCredits.get("pk1").amount, 10);
+
+  settlePaidUsage(db, stmts, "pk1", "1.2.3.4", 5, 0, id); // 전량 실패
+  assert.equal(stmts.getCredits.get("pk1").amount, 10, "두 번 환급하지 않는다");
+
+  const id2 = reserve(db, stmts, "pk1", 5);
+  refundStaleReservations(db, stmts);
+  settlePaidUsage(db, stmts, "pk1", "1.2.3.4", 5, 3, id2); // 3건 성공
+  assert.equal(stmts.getCredits.get("pk1").amount, 7, "쓴 만큼은 받는다");
+});
+
+test("settlePaidUsage: 예약 id 로 정산하면 같은 크기의 다른 예약을 건드리지 않는다", () => {
+  const { db, stmts } = freshDb();
+  stmts.upsertCredits.run("pk1", 10, "pack50", 0, 10, "pack50", 0);
+  const a = reserve(db, stmts, "pk1", 2);
+  const b = reserve(db, stmts, "pk1", 2);
+  settlePaidUsage(db, stmts, "pk1", "1.2.3.4", 2, 2, b);
+  assert.deepEqual(stmts.listReservations.all().map((r) => r.id), [a]);
+  settlePaidUsage(db, stmts, "pk1", "1.2.3.4", 2, 0, a);
+  assert.equal(stmts.getCredits.get("pk1").amount, 8);
+  assert.equal(stmts.listReservations.all().length, 0);
 });

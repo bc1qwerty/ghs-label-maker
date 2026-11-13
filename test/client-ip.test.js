@@ -57,3 +57,23 @@ test("TRUST_CF_HEADER=1 일 때만 cf-connecting-ip 를 신뢰한다", async () 
   // 켜져 있어도 헤더가 없으면 XFF 마지막 홉으로 간다.
   assert.equal(getClientIp(req({ "x-forwarded-for": "1.1.1.1, 9.9.9.9" })), "9.9.9.9");
 });
+
+// 상태 변경 요청의 Origin 검사(crossOriginGuard). 쿠키가 Domain=.txid.uk 라 다른 서브도메인의 multipart POST 가
+// preflight 없이 쿠키를 싣고 온다 — 이 미들웨어가 그 유일한 방어다.
+test("crossOriginGuard: 허용 출처·Origin 없음은 통과, 그 밖은 403, 읽기 요청은 보지 않는다", async () => {
+  const { crossOriginGuard } = await import("../server/client-ip.js");
+  const guard = crossOriginGuard(["https://ghs.txid.uk"]);
+  const run = (method, origin) => {
+    let status = 0, passed = false;
+    const res = { status(c) { status = c; return this; }, json() { return this; } };
+    guard({ method, headers: origin === undefined ? {} : { origin } }, res, () => { passed = true; });
+    return passed ? "next" : status;
+  };
+  assert.equal(run("POST", "https://ghs.txid.uk"), "next");
+  assert.equal(run("POST", undefined), "next");
+  for (const bad of ["https://evil.txid.uk", "https://txid.uk", "null", "https://GHS.txid.uk", "https://ghs.txid.uk:443", "http://ghs.txid.uk", "https://ghs.txid.uk.evil.com"]) {
+    assert.equal(run("POST", bad), 403, bad);
+    assert.equal(run("DELETE", bad), 403, bad);
+  }
+  for (const m of ["GET", "HEAD", "OPTIONS"]) assert.equal(run(m, "https://evil.txid.uk"), "next", m);
+});

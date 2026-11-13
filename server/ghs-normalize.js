@@ -120,7 +120,11 @@ export function normalizeGhsData(data, names, { danger } = {}) {
     const extra = data.pictograms.map((p) => p.code)
       .filter((c) => c !== "GHS07" && !derived.includes(c)
         && !(c === "GHS02" && flameOnlyFromH221) && !(c === "GHS01" && bombOnlyFromH205));
-    pictograms = [...new Set([...derived, ...extra])].sort().map((code) => ({ code, name: names[code] ?? code }));
+    // 제6조의2 ② 1호: 해골이 있으면 느낌표를 표시하지 않는다. derived 는 이미 그렇게 나오지만, 해골이 AI 가 명시한
+    // 쪽(extra)에서만 온 경우에도 최종 집합에서 같은 규칙을 지킨다.
+    const merged = new Set([...derived, ...extra]);
+    if (merged.has("GHS06")) merged.delete("GHS07");
+    pictograms = [...merged].sort().map((code) => ({ code, name: names[code] ?? code }));
   }
   const signalWord = danger && [...codes].some((c) => DANGER_H.has(c)) ? danger : data.signalWord;
   return {

@@ -65,13 +65,18 @@ export function createDb(dbPath) {
     refundCredits: db.prepare("UPDATE credits SET amount = amount + ? WHERE pubkey = ?"),
     openReservation: db.prepare("INSERT INTO reservations (pubkey, amount) VALUES (?, ?)"),
     closeReservation: db.prepare("DELETE FROM reservations WHERE id = (SELECT id FROM reservations WHERE pubkey = ? AND amount = ? ORDER BY id LIMIT 1)"),
+    closeReservationById: db.prepare("DELETE FROM reservations WHERE id = ?"),
+    // 예약이 이미 환급된 뒤(기동 환급) 끝난 요청의 성공분을 다시 받는다. 잔액이 모자라면 0 까지만.
+    chargeCredits: db.prepare("UPDATE credits SET amount = MAX(amount - ?, 0) WHERE pubkey = ?"),
     listReservations: db.prepare("SELECT id, pubkey, amount FROM reservations"),
     clearReservations: db.prepare("DELETE FROM reservations"),
     createPayment: db.prepare("INSERT INTO payments (pubkey, payment_hash, amount_sats, plan) VALUES (?, ?, ?, ?)"),
     getPayment: db.prepare("SELECT * FROM payments WHERE payment_hash = ?"),
     // 결제 후 모달이 닫혀 폴링이 죽은(paid-but-uncredited) 인보이스 재조정용.
     // 7일 창: 라이트닝 인보이스는 그 안에 만료되고, 전수 스캔을 피한다.
-    getPendingPayments: db.prepare("SELECT * FROM payments WHERE pubkey = ? AND status = 'pending' AND created_at > unixepoch() - 86400 * 7 ORDER BY created_at DESC LIMIT 50"),
+    // 닫은(expired) 인보이스도 만든 지 6시간 안이면 한 번씩 더 본다 — 닫은 뒤 결제가 확인되는 경우(닫는 판정이
+    // 일렀거나 phoenixd 가 늦게 받아 준 경우)를 열린 결제창의 폴링 없이도 정산하기 위해서다. 그 뒤로는 묻지 않는다.
+    getPendingPayments: db.prepare("SELECT * FROM payments WHERE pubkey = ? AND (status = 'pending' OR (status = 'expired' AND created_at > unixepoch() - 21600)) AND created_at > unixepoch() - 86400 * 7 ORDER BY created_at DESC LIMIT 50"),
     // Invoice expired and phoenixd confirmed it unpaid → it can never be paid; stop asking.
     expirePayment: db.prepare("UPDATE payments SET status = 'expired' WHERE payment_hash = ? AND status = 'pending'"),
     // Conditional flip: only one caller can ever transition pending → paid.

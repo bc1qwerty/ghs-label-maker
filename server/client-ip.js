@@ -32,3 +32,17 @@ export function getClientIp(req) {
   }
   return req.ip || (req.socket && req.socket.remoteAddress) || "";
 }
+
+/**
+ * 상태를 바꾸는 요청(GET·HEAD·OPTIONS 가 아닌 것)은 허용한 출처에서 온 것만 받는다.
+ * Origin 이 없는 요청(curl·서버 간 호출)은 브라우저 공격 경로가 아니라 통과시킨다.
+ * 비교는 글자 그대로다 — 브라우저는 Origin 을 소문자 스킴·호스트, 기본 포트 생략으로 보낸다.
+ */
+export function crossOriginGuard(allowedOrigins) {
+  return (req, res, next) => {
+    if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+    const origin = req.headers.origin;
+    if (origin && !allowedOrigins.includes(origin)) return res.status(403).json({ error: "Forbidden origin" });
+    next();
+  };
+}
