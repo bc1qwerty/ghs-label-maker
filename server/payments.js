@@ -32,6 +32,56 @@ export function calcBatchPrice(fileCount) {
   return { perFile, total: perFile * fileCount, discount: Math.round((1 - perFile / 100) * 100) };
 }
 
+/** create-batch 의 fileCount 검증. 정수 1..BATCH_MAX_FILES 만 — `"1000000e-6"` 같은 문자열은 숫자 비교를
+ *  통과하면서(Number 강제변환 = 1) plan 이름에는 그대로 실려, 100 sats 에 크레딧 1,000,000 이 붙었다. */
+export function isValidBatchCount(n) {
+  return Number.isInteger(n) && n >= 1 && n <= BATCH_MAX_FILES;
+}
+
+/** `batch-<n>` plan 의 크레딧 수. 형식이 어긋난 plan(검증 전에 만들어진 인보이스)은 낸 금액으로 되돌려
+ *  계산한다 — 정가(100 sats/건) 기준이라 낸 것보다 많이 받을 수 없다. */
+export function batchCredits(payment) {
+  const m = /^batch-(\d{1,2})$/.exec(payment.plan);
+  const n = m ? Number(m[1]) : 0;
+  if (isValidBatchCount(n)) return n;
+  const byAmount = Math.floor((Number(payment.amount_sats) || 0) / 100);
+  console.error(`[GHS] settlePayment: 형식이 어긋난 batch plan '${payment.plan}' — 금액 기준 ${byAmount} 크레딧. hash=${payment.payment_hash}`);
+  return Math.min(Math.max(byAmount, 0), BATCH_MAX_FILES);
+}
+
+/**
+ * 통과시킨 요청의 사용량을 딱 한 번 정산한다. 핸들러는 추출이 끝나면 req._usageCount(성공 수)를 세팅한다.
+ * - 정상 종료(finish): 그 값으로 정산(미설정이면 0 — 검증 실패·에러는 전액 환급).
+ * - 클라이언트가 먼저 끊음(finish 없는 close): 추출은 계속 돌고 결과도 이력에 남는다. 그래서 여기서
+ *   0 으로 정산하면 «올리고 끊기» 로 과금 없이 결과를 받는다. 핸들러가 _usageCount 를 세팅하는
+ *   순간까지 기다렸다가 실제 성공 수로 정산한다. 끝내 세팅되지 않으면(핸들러 예외) graceMs 뒤 0 으로.
+ */
+export function trackUsage(req, res, settle, graceMs = 10 * 60 * 1000) {
+  let settled = false;
+  let waiting = false;
+  let count;
+  let timer = null;
+  const doSettle = () => {
+    if (settled) return;
+    settled = true;
+    if (timer) clearTimeout(timer);
+    settle(count || 0);
+  };
+  Object.defineProperty(req, "_usageCount", {
+    configurable: true,
+    get: () => count,
+    set: (v) => { count = v; if (waiting) doSettle(); },
+  });
+  res.on("finish", doSettle);
+  res.on("close", () => {
+    if (settled) return;
+    if (count !== undefined) return doSettle();
+    waiting = true;
+    timer = setTimeout(doSettle, graceMs);
+    timer.unref?.();
+  });
+}
+
 /**
  * Settle a confirmed payment: flip pending → paid and add credits, in one
  * transaction. Returns { credits, plan } on the first (winning) call and
@@ -49,7 +99,7 @@ export function settlePayment(db, stmts, plans, payment) {
 
     let creditsToAdd, planName;
     if (payment.plan.startsWith("batch-")) {
-      creditsToAdd = parseInt(payment.plan.split("-")[1], 10) || 1;
+      creditsToAdd = batchCredits(payment);
       // Purchased credits must never sit under plan='free' — reserveCredits
       // excludes free-plan rows, so credits parked there would be
       // unreservable (paid but unusable) after a plan-expiry reset.

@@ -252,3 +252,72 @@ test("reconcilePendingPayments: 7일 지난 pending 은 조회 대상이 아니�
   assert.equal(asked, 0, "만료된 옛 인보이스로 phoenixd 를 두드리지 않는다");
   assert.equal(stmts.getPayment.get("h-old").status, "pending");
 });
+
+// ── 2026-11 감사: fileCount 타입 검증·조기 끊김 정산 ──
+import { EventEmitter } from "node:events";
+import { isValidBatchCount, batchCredits, trackUsage } from "../server/payments.js";
+
+test("isValidBatchCount: 정수 1..30 만", () => {
+  for (const ok of [1, 5, 30]) assert.equal(isValidBatchCount(ok), true);
+  for (const bad of ["1000000e-6", "2400e-2", "3", 0, 31, 1.5, -1, null, undefined, NaN, [3], true]) {
+    assert.equal(isValidBatchCount(bad), false, String(bad));
+  }
+});
+
+test("settlePayment: 형식이 어긋난 batch plan 은 낸 금액만큼만 적립", () => {
+  const { db, stmts } = freshDb();
+  // 검증 전에 만들어진 위조 인보이스: 100 sats 에 plan 'batch-1000000e-6'
+  const forged = seedPayment(stmts, { hash: "forged", sats: 100, plan: "batch-1000000e-6" });
+  assert.equal(settlePayment(db, stmts, PLANS, forged).credits, 1);
+  const forged2 = seedPayment(stmts, { hash: "forged2", sats: 1200, plan: "batch-2400e-2" });
+  assert.equal(settlePayment(db, stmts, PLANS, forged2).credits, 1 + 12);
+  // 정상 plan 은 그대로
+  const ok = seedPayment(stmts, { hash: "ok", sats: 425, plan: "batch-5" });
+  assert.equal(settlePayment(db, stmts, PLANS, ok).credits, 13 + 5);
+  assert.equal(batchCredits({ plan: "batch-99", amount_sats: 100, payment_hash: "x" }), 1);
+});
+
+function fakeReqRes() {
+  return { req: {}, res: new EventEmitter() };
+}
+
+test("trackUsage: 정상 종료는 핸들러가 세팅한 수로 한 번만 정산", () => {
+  const { req, res } = fakeReqRes();
+  const calls = [];
+  trackUsage(req, res, (n) => calls.push(n));
+  req._usageCount = 2;
+  res.emit("finish");
+  res.emit("close");
+  assert.deepEqual(calls, [2]);
+});
+
+test("trackUsage: 검증 실패(미설정)로 끝나면 0", () => {
+  const { req, res } = fakeReqRes();
+  const calls = [];
+  trackUsage(req, res, (n) => calls.push(n));
+  res.emit("finish");
+  res.emit("close");
+  assert.deepEqual(calls, [0]);
+});
+
+test("trackUsage: 올리고 끊어도 추출이 끝나면 실제 성공 수로 과금", () => {
+  const { req, res } = fakeReqRes();
+  const calls = [];
+  trackUsage(req, res, (n) => calls.push(n));
+  res.emit("close"); // 클라이언트가 먼저 끊음 — 예전에는 여기서 0 으로 정산(전액 환급)
+  assert.deepEqual(calls, []);
+  req._usageCount = 3; // 추출 종료
+  assert.deepEqual(calls, [3]);
+  assert.equal(req._usageCount, 3);
+});
+
+test("trackUsage: 끊긴 뒤 핸들러가 끝내 세팅하지 않으면 유예 뒤 0 으로 환급", async () => {
+  const { req, res } = fakeReqRes();
+  const calls = [];
+  trackUsage(req, res, (n) => calls.push(n), 20);
+  res.emit("close");
+  await new Promise((r) => setTimeout(r, 60));
+  assert.deepEqual(calls, [0]);
+  req._usageCount = 1; // 뒤늦은 세팅은 다시 정산하지 않는다
+  assert.deepEqual(calls, [0]);
+});

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pictogramsFromH, sortStatements, normalizePhone, mergeContinuations, normalizeGhsData } from "../server/ghs-normalize.js";
+import { pictogramsFromH, sortStatements, normalizePhone, mergeContinuations, normalizeGhsData, DANGER_H } from "../server/ghs-normalize.js";
 
 // MSDS 목록에서 경고표지를 만들며(2026-11-05) 찾은 것들을 AI 추출 경로에도 고정한다.
 
@@ -89,4 +89,11 @@ test("신호어: 위험이 확정되는 H 코드가 있으면 AI 가 «경고» 
   assert.equal(ko(["H228 인화성 고체"], "경고"), "경고");
   // 영어 라벨은 그 언어의 단어로.
   assert.equal(normalizeGhsData({ ...base, signalWord: "Warning", hazardStatements: ["H314 Causes severe skin burns"] }, {}, { danger: "Danger" }).signalWord, "Danger");
+});
+
+// 고시 별표 2: 폭발성 물질 등급 1.5(H205)의 그림문자는 폭탄이 아니라 «주황색 바탕에 숫자 1.5», 신호어는 위험.
+test("H205(등급 1.5)는 폭탄 그림문자를 부르지 않는다", () => {
+  assert.deepEqual(pictogramsFromH(new Set(["H205"])), []);
+  assert.deepEqual(pictogramsFromH(new Set(["H204"])), ["GHS01"]);
+  assert.equal(DANGER_H.has("H205"), true);
 });

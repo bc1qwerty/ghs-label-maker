@@ -7,7 +7,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
 import { createDb } from "./db.js";
-import { PLANS, BATCH_MAX_FILES, calcBatchPrice, settlePayment, reconcilePendingPayments, recordUsage as recordUsageImpl, reserveCredits as reserveCreditsImpl, settlePaidUsage as settlePaidUsageImpl } from "./payments.js";
+import { PLANS, isValidBatchCount, trackUsage, calcBatchPrice, settlePayment, reconcilePendingPayments, recordUsage as recordUsageImpl, reserveCredits as reserveCreditsImpl, settlePaidUsage as settlePaidUsageImpl } from "./payments.js";
 import { complete, extractJson, llmStats } from "./llm.js";
 import { getClientIp } from "./client-ip.js";
 import { normalizeGhsData } from "./ghs-normalize.js";
@@ -44,6 +44,7 @@ const pdfParse = _require("pdf-parse");
 // Concurrency limiter for AI calls
 const MAX_CONCURRENT_AI = 3;
 let activeAiCalls = 0;
+const MAX_AI_QUEUE = 30;
 const aiQueue = [];
 function acquireAiSlot() {
   return new Promise((resolve) => {
@@ -124,25 +125,16 @@ async function getUserPubkey(req) {
 
 
 // ─── Auth & Usage check middleware ───
-// 통과시킨 요청의 사용량을 응답 종료 시점에 딱 한 번 정산한다. 핸들러는
-// req._usageCount(성공 추출 수)만 세팅하면 된다 — 미설정이면 0으로 보고,
-// 결제 예약분은 전액 환급된다(검증 실패·에러·클라 끊김 어느 경로든 안전).
-// finish/close 를 둘 다 듣되 가드로 한 번만 정산한다.
+// 사용량 정산은 trackUsage(payments.js) 가 한 번만 한다 — 조기 끊김 처리는 거기 주석.
 function admitUsage(req, res, next, ip, authInfo) {
   req.authInfo = authInfo;
-  let settled = false;
-  const doSettle = () => {
-    if (settled) return;
-    settled = true;
-    const success = req._usageCount || 0;
+  trackUsage(req, res, (success) => {
     if (authInfo.type === "paid") {
       settlePaidUsageImpl(db, stmts, authInfo.pubkey, ip, authInfo.reserved, success);
     } else {
       recordUsageImpl(db, stmts, authInfo.pubkey, ip, success);
     }
-  };
-  res.on("finish", doSettle);
-  res.on("close", doSettle);
+  });
   return next();
 }
 
@@ -150,6 +142,13 @@ async function checkUsage(req, res, next) {
   const pubkey = await getUserPubkey(req);
   const ip = getClientIp(req);
   const fileCount = Array.isArray(req.files) ? req.files.length : (req.file ? 1 : 0);
+
+  // AI 호출은 동시 3건이고 나머지는 줄을 선다. 줄에 상한이 없으면 무료 요청이 쌓여 유료 사용자의
+  // 대기가 타임아웃(→ 폴백 과금)까지 늘어난다. 예약·사용량 기록 전에 돌려보낸다.
+  if (aiQueue.length + fileCount > MAX_AI_QUEUE) {
+    res.set("Retry-After", "60");
+    return res.status(503).json({ error: "Server busy", message: "Too many extractions in progress. Please retry in a minute." });
+  }
 
   if (pubkey) {
     // 유료: 원자적으로 예약(amount >= fileCount 일 때만 한 번에 차감). 동시
@@ -166,9 +165,15 @@ async function checkUsage(req, res, next) {
       return admitUsage(req, res, next, ip, { pubkey, type: "free", remaining: FREE_LIMIT - cnt - fileCount });
     }
 
+    // 크레딧이 있는데도 여기 왔다면 요청한 파일 수보다 잔액이 적은 것이다 — «소진» 이 아니라 그렇게 알린다.
+    const balance = stmts.getCredits.get(pubkey);
+    const credits = balance && balance.plan !== "free" ? balance.amount : 0;
     return res.status(402).json({
       error: "Usage limit reached",
-      message: "Free trial exhausted. Purchase credits to continue.",
+      message: credits > 0
+        ? `You have ${credits} credit(s) but uploaded ${fileCount} file(s). Upload fewer files or purchase more credits.`
+        : "Free trial exhausted. Purchase credits to continue.",
+      credits,
       needsPayment: true,
       plans: PLANS,
     });
@@ -273,7 +278,7 @@ app.get("/api/payment/price/:count", (req, res) => {
 app.post("/api/payment/create-batch", express.json(), requireAuth, async (req, res) => {
   const { fileCount } = req.body;
   const pubkey = req.verifiedPubkey;
-  if (!fileCount || fileCount < 1 || fileCount > BATCH_MAX_FILES) return res.status(400).json({ error: "File count must be 1-30" });
+  if (!isValidBatchCount(fileCount)) return res.status(400).json({ error: "File count must be 1-30" });
   if (!PHOENIXD_PASSWORD) return res.status(503).json({ error: "Payment not configured" });
 
   const price = calcBatchPrice(fileCount);
@@ -970,6 +975,9 @@ app.use((err, _req, res, _next) => {
   if (err.message === "Only PDF files are allowed") {
     return res.status(400).json({ error: err.message });
   }
+  // 깨진 JSON·과대 본문은 클라이언트 오류다(스택을 로그에 남길 일도 아니다).
+  if (err.type === "entity.parse.failed") return res.status(400).json({ error: "Invalid JSON" });
+  if (err.type === "entity.too.large") return res.status(413).json({ error: "Request body too large" });
   console.error("[GHS] Unhandled error:", err);
   res.status(500).json({ error: "Internal error" });
 });

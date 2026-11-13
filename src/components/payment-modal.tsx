@@ -6,9 +6,6 @@ import QRCode from "qrcode";
 interface PaymentModalProps {
   pubkey: string;
   fileCount?: number; // if set, show per-file pricing first
-  // 인보이스 생성이 서버에서 requireAuth 를 거친다. 쿠키(txid_session)는
-  // same-origin 이라 자동 전송되지만, 레거시 토큰 사용자는 이 헤더가 필요하다.
-  authToken?: string;
   onClose: () => void;
   onPaid: () => void;
 }
@@ -21,7 +18,7 @@ const PLANS = [
 
 type Step = "select" | "invoice" | "paid";
 
-export function PaymentModal({ pubkey, fileCount, authToken, onClose, onPaid }: PaymentModalProps) {
+export function PaymentModal({ pubkey, fileCount, onClose, onPaid }: PaymentModalProps) {
   const [step, setStep] = React.useState<Step>("select");
   const [invoice, setInvoice] = React.useState("");
   const [qrDataUrl, setQrDataUrl] = React.useState("");
@@ -84,7 +81,6 @@ export function PaymentModal({ pubkey, fileCount, authToken, onClose, onPaid }: 
     setChecking(true);
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (authToken) headers["X-Auth-Token"] = authToken;
       const res = await fetch(endpoint, {
         method: "POST",
         headers,

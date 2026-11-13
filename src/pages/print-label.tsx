@@ -10,7 +10,11 @@ function decode(hash: string): GhsData | null {
   try {
     const b64 = hash.replace(/^#/, "").replace(/-/g, "+").replace(/_/g, "/");
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    return JSON.parse(new TextDecoder().decode(bytes));
+    const data = JSON.parse(new TextDecoder().decode(bytes));
+    // 모양이 어긋난 데이터를 그대로 그리면 라벨 컴포넌트가 던져 흰 화면이 된다.
+    const ok = data && typeof data === "object"
+      && Array.isArray(data.pictograms) && Array.isArray(data.hazardStatements) && Array.isArray(data.precautionaryStatements);
+    return ok ? data : null;
   } catch {
     return null;
   }

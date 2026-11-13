@@ -56,7 +56,6 @@ export default function Home() {
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = React.useState(false);
   const [userPubkey, setUserPubkey] = React.useState<string | null>(null);
-  const [ghsToken, setGhsToken] = React.useState<string | null>(null);
   const [needsPayment, setNeedsPayment] = React.useState(false);
   const [userInfo, setUserInfo] = React.useState<{
     totalUsed: number; credits: number; plan: string;
@@ -70,25 +69,11 @@ export default function Home() {
   const labelContainerRef = React.useRef<HTMLDivElement>(null);
 
   // Listen for auth state changes from txid-auth.js
-  // Intercept fetch to capture session token when txid-auth.js posts it
+  // 인증은 함대 공용 세션 쿠키(txid_session, HttpOnly)로만 한다. 예전에는 fetch 를 가로채 세션 토큰을
+  // localStorage 에 복사해 X-Auth-Token 으로 보냈다 — HttpOnly 로 지키는 토큰을 JS 가 읽는 곳에 한 벌 더
+  // 두는 일이라 걷었다. 이미 저장된 사본도 지운다.
   React.useEffect(() => {
-    const origFetch = window.fetch;
-    window.fetch = function(url, opts) {
-      if (typeof url === "string" && url.includes("/auth/session") && opts?.body) {
-        try {
-          const body = JSON.parse(opts.body as string);
-          if (body.token) {
-            localStorage.setItem("ghs-auth-token", body.token);
-            setGhsToken(body.token);
-          }
-        } catch {}
-      }
-      return origFetch.apply(this, arguments as any);
-    };
-
-    // Restore saved token
-    const savedToken = localStorage.getItem("ghs-auth-token");
-    if (savedToken) setGhsToken(savedToken);
+    try { localStorage.removeItem("ghs-auth-token"); } catch {}
 
     const check = () => {
       const user = window.txidAuth?.getUser?.();
@@ -100,7 +85,6 @@ export default function Home() {
     try {
       window.txidAuth?.onAuthChange?.((u) => {
         setUserPubkey(u?.pubkey || null);
-        if (!u) { localStorage.removeItem("ghs-auth-token"); setGhsToken(null); }
       });
     } catch {}
     return () => { clearInterval(interval); clearTimeout(timeout); };
@@ -109,17 +93,15 @@ export default function Home() {
   // Fetch user info when pubkey changes
   const fetchUserInfo = React.useCallback(async () => {
     if (!userPubkey) { setUserInfo(null); setHistory([]); return; }
-    const authHeaders: Record<string, string> = {};
-    if (ghsToken) authHeaders["X-Auth-Token"] = ghsToken;
     try {
       const [userRes, histRes] = await Promise.all([
-        fetch(`/api/user/${userPubkey}`, { headers: authHeaders, credentials: "include" }),
-        fetch(`/api/history/${userPubkey}`, { headers: authHeaders, credentials: "include" }),
+        fetch(`/api/user/${userPubkey}`, { credentials: "include" }),
+        fetch(`/api/history/${userPubkey}`, { credentials: "include" }),
       ]);
       if (userRes.ok) setUserInfo(await userRes.json());
       if (histRes.ok) setHistory(await histRes.json());
     } catch {}
-  }, [userPubkey, ghsToken]);
+  }, [userPubkey]);
 
   React.useEffect(() => { fetchUserInfo(); }, [fetchUserInfo]);
 
@@ -203,9 +185,6 @@ export default function Home() {
     formData.append("language", language);
 
     try {
-      const headers: Record<string, string> = {};
-      if (ghsToken) headers["X-Auth-Token"] = ghsToken;
-
       const endpointMap: Record<Mode, string> = {
         ghs: "/api/ghs/extract-batch",
         transport: "/api/transport/extract-batch",
@@ -217,15 +196,15 @@ export default function Home() {
       const response = await fetch(endpoint, {
         method: "POST",
         body: formData,
-        headers,
       });
 
       if (response.status === 402) {
-        const err = await response.json().catch(() => ({})) as { needsLogin?: boolean; message?: string };
+        const err = await response.json().catch(() => ({})) as { needsLogin?: boolean; message?: string; credits?: number };
         if (err.needsLogin && !userPubkey) {
           requestLogin("Free trial exhausted. Please login and purchase credits.");
         } else {
-          setApiError("Free trial exhausted. Please purchase credits.");
+          // 크레딧이 남았는데 파일 수가 더 많은 경우는 서버가 그 사실을 문구로 준다.
+          setApiError(err.credits && err.message ? err.message : "Free trial exhausted. Please purchase credits.");
           setNeedsPayment(true);
         }
         setProcessingStatus("idle");
@@ -588,7 +567,6 @@ export default function Home() {
                 {needsPayment && userPubkey && (
                   <PaymentModal
                     pubkey={userPubkey}
-                    authToken={ghsToken ?? undefined}
                     fileCount={files.length > 0 ? files.length : undefined}
                     onClose={() => setNeedsPayment(false)}
                     onPaid={() => { setNeedsPayment(false); setApiError(null); fetchUserInfo(); }}

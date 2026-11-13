@@ -5,8 +5,10 @@
 // 근거: 「화학물질의 분류·표시 및 물질안전보건자료에 관한 기준」 별표 2(고시 제2026-26호, 2026-11-13 대조).
 //   ⚠ H221(인화성 가스 구분 2)은 그림문자 «없음» — UN GHS 판에 따라 불꽃을 붙이기도 하지만 국내 표는 없다.
 //   H232(자연발화성 가스)는 불꽃, H305(흡인 유해성 구분 2)는 건강 유해성(구분 1 의 H304 와 같다).
+//   ⚠ H205(폭발성 물질 등급 1.5)는 폭탄 그림이 아니라 «주황색 바탕에 숫자 1.5» 다 — 이 앱에 그 그림이 없으므로
+//   GHS01 에 넣지 않는다(신호어는 «위험» 그대로).
 const H_TO_PICTOGRAM = {
-  GHS01: ["H200", "H201", "H202", "H203", "H204", "H205", "H240", "H241"],
+  GHS01: ["H200", "H201", "H202", "H203", "H204", "H240", "H241"],
   GHS02: ["H220", "H222", "H223", "H224", "H225", "H226", "H228", "H232", "H241", "H242", "H250", "H251", "H252", "H260", "H261"],
   GHS03: ["H270", "H271", "H272"],
   GHS04: ["H280", "H281"],
@@ -106,8 +108,11 @@ export function normalizeGhsData(data, names, { danger } = {}) {
     const derived = pictogramsFromH(codes);
     // 불꽃의 근거가 H221(인화성 가스 구분 2, 그림문자 없음)뿐이면 AI 가 붙인 불꽃도 버린다.
     const flameOnlyFromH221 = codes.has("H221") && !derived.includes("GHS02");
+    // 폭탄의 근거가 H205(등급 1.5, 주황 바탕 숫자)뿐일 때도 같다.
+    const bombOnlyFromH205 = codes.has("H205") && !derived.includes("GHS01");
     const extra = data.pictograms.map((p) => p.code)
-      .filter((c) => c !== "GHS07" && !derived.includes(c) && !(c === "GHS02" && flameOnlyFromH221));
+      .filter((c) => c !== "GHS07" && !derived.includes(c)
+        && !(c === "GHS02" && flameOnlyFromH221) && !(c === "GHS01" && bombOnlyFromH205));
     pictograms = [...new Set([...derived, ...extra])].sort().map((code) => ({ code, name: names[code] ?? code }));
   }
   const signalWord = danger && [...codes].some((c) => DANGER_H.has(c)) ? danger : data.signalWord;

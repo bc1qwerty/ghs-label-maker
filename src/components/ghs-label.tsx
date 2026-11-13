@@ -6,7 +6,7 @@ interface GhsLabelProps {
   data: GhsData;
 }
 
-const DANGER_WORDS = new Set(["Danger", "위험", "危険", "危险", "Gefahr", "Peligro", "Perigo"]);
+const DANGER_WORDS = new Set(["Danger", "위험", "危険", "危险", "Gefahr", "Peligro", "Perigo", "อันตราย", "Nguy hiểm"]);
 
 export function GhsLabel({ data }: GhsLabelProps) {
   const isKorean = data.language === "ko";

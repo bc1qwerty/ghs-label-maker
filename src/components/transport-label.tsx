@@ -30,13 +30,31 @@ const CLASS_SVG_MAP: Record<string, string> = {
   "5.2": "/transport/class5-2.svg",
   "6": "/transport/class6.svg",
   "6.1": "/transport/class6.svg",
-  "6.2": "/transport/class6.svg",
   "8": "/transport/class8.svg",
   "9": "/transport/class9.svg",
 };
 
-function classToSvg(hazardClass: string): string {
-  return CLASS_SVG_MAP[hazardClass] || CLASS_SVG_MAP[hazardClass.split(".")[0]] || "/transport/class9.svg";
+// 그림이 없는 등급(6.2 감염성, 7 방사성, 모르는 값)에 다른 등급의 그림을 붙이지 않는다 — 6.2 에 독성 해골,
+// 7 에 기타(9) 그림이 나가던 것. 폭발물만 구분(1.1~1.6)이 같은 그림을 쓴다.
+function classToSvg(hazardClass: string): string | null {
+  const cls = hazardClass.trim();
+  return CLASS_SVG_MAP[cls] ?? (cls.split(".")[0] === "1" ? CLASS_SVG_MAP["1"] : null);
+}
+
+function ClassMark({ hazardClass, size }: { hazardClass: string; size: number }) {
+  const src = classToSvg(hazardClass);
+  if (src) return <img src={src} alt={`Class ${hazardClass}`} style={{ width: size, height: size }} />;
+  return (
+    <div
+      role="img"
+      aria-label={`Class ${hazardClass}`}
+      style={{ width: size, height: size, display: "flex", alignItems: "center", justifyContent: "center" }}
+    >
+      <div style={{ width: size * 0.68, height: size * 0.68, transform: "rotate(45deg)", border: "3px solid #000", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span style={{ transform: "rotate(-45deg)", fontWeight: 900, fontSize: size * 0.22 }}>{hazardClass}</span>
+      </div>
+    </div>
+  );
 }
 
 export function TransportLabel({ data }: { data: TransportData }) {
@@ -93,16 +111,12 @@ export function TransportLabel({ data }: { data: TransportData }) {
         {/* Left: Diamond pictogram */}
         <div style={{ width: 240, minWidth: 240, borderRight: "3px solid #333", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 16px", gap: 16 }}>
           {data.hazardClass && (
-            <img
-              src={classToSvg(data.hazardClass)}
-              alt={`Class ${data.hazardClass}`}
-              style={{ width: 140, height: 140 }}
-            />
+            <ClassMark hazardClass={data.hazardClass} size={140} />
           )}
           {data.subsidiaryRisks.length > 0 && (
             <div style={{ display: "flex", gap: 8 }}>
               {data.subsidiaryRisks.map((r) => (
-                <img key={r} src={classToSvg(r)} alt={`Class ${r}`} style={{ width: 60, height: 60 }} />
+                <ClassMark key={r} hazardClass={r} size={60} />
               ))}
             </div>
           )}
