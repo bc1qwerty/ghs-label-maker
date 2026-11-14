@@ -108,6 +108,27 @@ export default function Home() {
 
   React.useEffect(() => { fetchUserInfo(); }, [fetchUserInfo]);
 
+  // 기록 삭제: 항목마다 확인을 한 번 거친다. 목록은 화면 폭에 따라 두 자리에 그려지므로 상태는 여기 둔다.
+  const [confirmDeleteId, setConfirmDeleteId] = React.useState<number | null>(null);
+  const [historyError, setHistoryError] = React.useState<string | null>(null);
+  const focusVisibleHistoryList = () => {
+    const lists = Array.from(document.querySelectorAll<HTMLElement>("[data-history-list]"));
+    lists.find((el) => el.offsetParent !== null)?.focus();
+  };
+  const deleteHistoryItem = async (id: number) => {
+    if (!userPubkey) return;
+    setHistoryError(null);
+    try {
+      const res = await fetch(`/api/history/${userPubkey}/${id}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error(String(res.status));
+      setHistory((h) => h.filter((x) => x.id !== id));
+      setConfirmDeleteId(null);
+      setTimeout(focusVisibleHistoryList, 0);
+    } catch {
+      setHistoryError("Couldn't delete this entry. Please try again.");
+    }
+  };
+
   const loadHistoryItem = async (id: number) => {
     if (!userPubkey) return;
     try {
@@ -357,12 +378,32 @@ export default function Home() {
   const historyList = userPubkey && history.length > 0 ? (
                   <div className="space-y-2">
                     <p className="font-semibold text-sm">Recent Labels</p>
-                    <div className="rounded-lg border bg-card max-h-64 overflow-y-auto">
+                    {historyError && <p role="alert" className="text-xs text-destructive">{historyError}</p>}
+                    <div data-history-list tabIndex={-1} aria-label="Recent Labels" className="rounded-lg border bg-card max-h-64 overflow-y-auto focus:outline-none">
                       {history.slice(0, 20).map((item) => (
+                        <div key={item.id} className="flex items-stretch border-b last:border-b-0">
+                        {confirmDeleteId === item.id ? (
+                          <div className="flex-1 flex items-center justify-between gap-2 px-3 py-2 text-xs">
+                            <span className="truncate">Delete “{item.filename}”?</span>
+                            <span className="flex-shrink-0 flex gap-1">
+                              <button
+                                type="button"
+                                autoFocus
+                                onClick={() => deleteHistoryItem(item.id)}
+                                className="px-2 py-1 rounded bg-destructive text-destructive-foreground hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
+                              >Delete</button>
+                              <button
+                                type="button"
+                                onClick={() => { setConfirmDeleteId(null); setHistoryError(null); }}
+                                className="px-2 py-1 rounded border hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
+                              >Cancel</button>
+                            </span>
+                          </div>
+                        ) : (<>
                         <button
-                          key={item.id}
+                          type="button"
                           onClick={() => loadHistoryItem(item.id)}
-                          className="w-full text-left px-3 py-2 text-xs hover:bg-muted/50 border-b last:border-b-0 transition-colors"
+                          className="flex-1 min-w-0 text-left px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="truncate font-medium">{item.filename}</span>
@@ -380,6 +421,17 @@ export default function Home() {
                             {new Date(item.created_at * 1000).toLocaleDateString()}
                           </p>
                         </button>
+                        <button
+                          type="button"
+                          aria-label={`Delete ${item.filename}`}
+                          title="Delete"
+                          onClick={() => { setHistoryError(null); setConfirmDeleteId(item.id); }}
+                          className="flex-shrink-0 w-8 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2"
+                        >
+                          <X className="w-3.5 h-3.5" aria-hidden="true" />
+                        </button>
+                        </>)}
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -847,6 +899,12 @@ export default function Home() {
       <footer className="print:hidden border-t py-4">
         <div className="max-w-6xl mx-auto px-4 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
           <span>&copy; {new Date().getFullYear()} GHS Label Maker</span>
+          {/* 방침 10절의 약속: 중요한 변경은 홈에 30일 이상 알린다. 기한이 지나면 스스로 사라진다. */}
+          {Date.now() < Date.UTC(2026, 11, 15) && (
+            <a href="/privacy" className="w-full sm:w-auto text-primary hover:underline">
+              Privacy Policy updated November 14, 2026 (data retention, AI processing, history deletion)
+            </a>
+          )}
           <nav className="flex flex-wrap gap-4">
             <a href="/terms" className="hover:text-primary transition-colors">Terms of Service</a>
             <a href="/privacy" className="hover:text-primary transition-colors">Privacy Policy</a>

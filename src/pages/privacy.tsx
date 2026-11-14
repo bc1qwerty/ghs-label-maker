@@ -13,7 +13,7 @@ export default function Privacy() {
 
         <h1 className="text-3xl font-bold mb-2">Privacy Policy</h1>
         <p className="text-sm text-muted-foreground mb-8">
-          Last updated: April 14, 2026
+          Last updated: November 14, 2026
         </p>
 
         <div className="prose prose-neutral dark:prose-invert max-w-none space-y-6 text-sm leading-relaxed">
@@ -41,10 +41,11 @@ export default function Privacy() {
             <h3 className="text-base font-semibold mt-4 mb-2">2.2 Uploaded Documents</h3>
             <p>
               You may upload PDF documents such as Safety Data Sheets (SDS/MSDS) or battery test
-              reports for processing. These files are held temporarily on our servers, sent to
-              our AI processing provider for extraction, and the extracted data is returned to
-              your browser and stored in your account's history for thirty (30) days. Raw
-              uploaded files are not retained beyond the processing window.
+              reports for processing. These files are held only in the server's memory while
+              they are processed and are never written to disk. The server extracts the text of
+              each file and sends up to the first 15,000 characters of it to the AI model
+              described in section 3. The extracted data is returned to your browser and, if you
+              are signed in, stored in your account's history for thirty (30) days.
             </p>
 
             <h3 className="text-base font-semibold mt-4 mb-2">2.3 Generated Output History</h3>
@@ -52,37 +53,30 @@ export default function Privacy() {
               The structured data extracted from your uploads (chemical names, hazard statements,
               pictograms, and similar fields) is saved to your account's history for thirty days
               so that you can re-download or print prior outputs without re-processing the source
-              file. History entries are deleted automatically after thirty days or when you
-              request deletion.
+              file. History entries are deleted automatically after thirty days. You can also
+              delete any entry yourself from the history list on the main page, or ask us to
+              delete it.
             </p>
 
             <h3 className="text-base font-semibold mt-4 mb-2">2.4 Usage and IP Address</h3>
             <p>
-              For fraud prevention and to enforce free-tier rate limits, the Service records the
-              IP address of requests and the number of extractions performed. IP addresses are
-              stored only in aggregate form linked to the pubkey or to an anonymous request
-              count; they are not used for advertising or tracking across other sites.
+              To enforce the free-tier limit and prevent abuse, the Service keeps a record of
+              each successful extraction: the time, your pubkey if you are signed in, and the
+              IP address of the request. If you are signed in, the IP address in these records
+              is deleted after ninety (90) days. If you are not signed in, the IP address is the
+              only key for the lifetime free-tier limit, so after ninety days it is replaced with
+              a pseudonym — a keyed hash that cannot be turned back into the address — which is
+              used only for that count. IP addresses are not used for advertising or for tracking
+              across other sites.
             </p>
 
             <h3 className="text-base font-semibold mt-4 mb-2">2.5 Payment Information</h3>
             <p>
-              Payment information differs by payment method:
+              Payments are made over the Bitcoin Lightning Network and are settled directly
+              between your wallet and our node. No card data, no billing address, and no
+              personal information is collected. The Service records the payment amount and the
+              resulting credit grant.
             </p>
-            <ul className="list-disc pl-6 space-y-1">
-              <li>
-                <strong>Lightning Network payments</strong> are settled directly between your
-                wallet and our node. No card data, no billing address, and no personal
-                information is collected. The Service records the payment amount and the
-                resulting credit grant.
-              </li>
-              <li>
-                <strong>Card or fiat payments</strong> (where available) are processed by our
-                third-party Merchant of Record, Paddle.com Inc. Paddle collects and processes
-                your payment information (card number, billing address, tax information) in
-                accordance with its own privacy policy. We receive only a transaction identifier,
-                the amount, and the purchased plan. We never see your full card number.
-              </li>
-            </ul>
           </section>
 
           <section>
@@ -90,23 +84,17 @@ export default function Privacy() {
             <p>The Service relies on the following third parties to operate:</p>
             <ul className="list-disc pl-6 space-y-1">
               <li>
-                <strong>Anthropic (Claude API)</strong> — processes uploaded documents to extract
-                hazard data. Anthropic does not use API traffic to train models. See Anthropic's
-                privacy policy for details.
+                <strong>AI extraction</strong> — the extracted document text is normally
+                processed by a language model running on a machine operated by the Service's
+                operator; in that case it is not sent to any third party. Only if that model is
+                unavailable is the text sent to <strong>Anthropic (Claude API)</strong> instead.
+                Anthropic does not use API traffic to train models. See Anthropic's privacy
+                policy for details.
               </li>
               <li>
                 <strong>api.txid.uk</strong> — provides Lightning Network authentication and
                 stores the mapping between your Lightning pubkey and the Service's internal user
                 record.
-              </li>
-              <li>
-                <strong>Paddle</strong> — if you pay by card, Paddle acts as the Merchant of
-                Record. Paddle's own Privacy Notice governs how it handles your payment data.
-              </li>
-              <li>
-                <strong>Cloudflare</strong> — provides DNS, TLS termination, and DDoS protection
-                for txid.uk domains. Cloudflare may log IP addresses and request metadata as part
-                of its security services.
               </li>
             </ul>
             <p>
@@ -133,9 +121,10 @@ export default function Privacy() {
           <section>
             <h2 className="text-xl font-semibold mt-8 mb-3">5. Data Retention</h2>
             <ul className="list-disc pl-6 space-y-1">
-              <li><strong>Uploaded PDF files:</strong> deleted immediately after processing completes.</li>
-              <li><strong>Generated output history:</strong> thirty (30) days.</li>
-              <li><strong>Usage records and IP addresses:</strong> up to ninety (90) days, for billing and anti-abuse purposes.</li>
+              <li><strong>Uploaded PDF files:</strong> held in memory only; discarded when processing completes.</li>
+              <li><strong>Generated output history:</strong> thirty (30) days, or until you delete the entry.</li>
+              <li><strong>Usage records (time and pubkey):</strong> kept for free-tier and billing accounting.</li>
+              <li><strong>IP addresses in usage records:</strong> deleted after ninety (90) days if you were signed in; replaced with an irreversible pseudonym after ninety (90) days if you were not.</li>
               <li><strong>Payment records:</strong> retained for the period required by applicable tax and accounting law (typically five years in the Republic of Korea).</li>
               <li><strong>Lightning pubkey and credit balance:</strong> retained for as long as your account is active. On account deletion, the record is anonymised.</li>
             </ul>
@@ -164,10 +153,10 @@ export default function Privacy() {
           <section>
             <h2 className="text-xl font-semibold mt-8 mb-3">7. Data Security</h2>
             <p>
-              All traffic to and from the Service is encrypted in transit using TLS. Server-side
+              All traffic to and from the Service is encrypted in transit using TLS, which is
+              terminated on the Service's own server (no CDN or proxy sits in between). Server-side
               data is stored on hosts protected by operating-system-level access controls.
-              Payment data handled by Paddle is subject to PCI-DSS requirements managed by
-              Paddle, not by the operator. While we take reasonable measures to protect your
+              While we take reasonable measures to protect your
               data, no system can be guaranteed to be completely secure.
             </p>
           </section>
@@ -176,8 +165,7 @@ export default function Privacy() {
             <h2 className="text-xl font-semibold mt-8 mb-3">8. International Transfers</h2>
             <p>
               Because the Service uses third-party providers located outside the Republic of
-              Korea (Anthropic and Cloudflare in the United States, Paddle in the United Kingdom
-              and the United States), data you submit may be transferred to and processed in
+              Korea (Anthropic in the United States, only when the fallback model is used), data you submit may be transferred to and processed in
               countries with different data protection rules than your own. We rely on the
               standard contractual clauses and other safeguards offered by these providers.
             </p>
