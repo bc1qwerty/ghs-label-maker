@@ -67,7 +67,16 @@ export function PaymentModal({ pubkey, fileCount, onClose, onPaid }: PaymentModa
   };
 
   React.useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") closeModal(); };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") return closeModal();
+      if (e.key !== "Tab" || !panelRef.current) return;
+      const items = panelRef.current.querySelectorAll<HTMLElement>("button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex='-1'])");
+      if (!items.length) return;
+      const first = items[0], last = items[items.length - 1];
+      const inside = panelRef.current.contains(document.activeElement);
+      if (e.shiftKey && (!inside || document.activeElement === first)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (!inside || document.activeElement === last)) { e.preventDefault(); first.focus(); }
+    };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [closeModal]);

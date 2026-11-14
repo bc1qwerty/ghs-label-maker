@@ -128,6 +128,9 @@ export function normalizeGhsData(data, names, { danger } = {}) {
     const merged = new Set([...pictogramsFromH(codes, extra), ...extra]);
     if (merged.has("GHS06")) merged.delete("GHS07");
     pictograms = [...merged].sort().map((code) => ({ code, name: names[code] ?? code }));
+  } else if (pictograms?.some((p) => p.code === "GHS06")) {
+    // H 코드를 하나도 못 읽었어도 제6조의2 ② 1호는 지킨다.
+    pictograms = pictograms.filter((p) => p.code !== "GHS07");
   }
   const signalWord = danger && [...codes].some((c) => DANGER_H.has(c)) ? danger : data.signalWord;
   return {

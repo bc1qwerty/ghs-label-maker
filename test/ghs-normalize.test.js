@@ -130,3 +130,15 @@ test("normalizeGhsData: 부식성이 AI 가 명시한 쪽에서만 와도 자극
   // 부식성이 없으면 자극성은 느낌표다
   assert.deepEqual(codesOf(normalizeGhsData({ ...base, pictograms: [], hazardStatements: ["H315 skin"] }, {})), ["GHS07"]);
 });
+
+test("H 코드를 하나도 못 읽었어도 해골이 있으면 느낌표는 빠진다(제6조의2 ② 1호)", () => {
+  const out = normalizeGhsData({
+    pictograms: [{ code: "GHS06", name: "a" }, { code: "GHS07", name: "b" }, { code: "GHS05", name: "c" }],
+    hazardStatements: ["삼키면 유독함"], precautionaryStatements: [], emergencyPhone: "",
+  }, {});
+  assert.deepEqual(out.pictograms.map((p) => p.code), ["GHS06", "GHS05"]);
+  const kept = normalizeGhsData({
+    pictograms: [{ code: "GHS07", name: "b" }], hazardStatements: [], precautionaryStatements: [], emergencyPhone: "",
+  }, {});
+  assert.deepEqual(kept.pictograms.map((p) => p.code), ["GHS07"]);
+});

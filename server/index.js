@@ -204,6 +204,20 @@ async function checkUsage(req, res, next) {
 }
 
 
+// 업로드(multer, 최대 10×10MB 메모리)보다 먼저 선다: 무료 한도를 다 쓴 익명 IP 의 본문은 읽지 않는다.
+async function anonQuotaGate(req, res, next) {
+  if (await getUserPubkey(req)) return next();
+  const { cnt } = stmts.countByIp.get(getClientIp(req));
+  if (cnt < FREE_LIMIT) return next();
+  return res.status(402).json({
+    error: "Usage limit reached",
+    message: "Free trial exhausted. Login and purchase credits to continue.",
+    needsPayment: true,
+    needsLogin: true,
+    plans: PLANS,
+  });
+}
+
 // ─── Rate Limiting (in-memory, per IP) ───
 const rateLimitStore = new Map();
 
@@ -629,7 +643,7 @@ const upload = multer({
 // ─── Routes ───
 
 // Single extraction
-app.post("/api/ghs/extract", upload.single("file"), checkUsage, async (req, res) => {
+app.post("/api/ghs/extract", anonQuotaGate, upload.single("file"), checkUsage, async (req, res) => {
   const file = req.file;
   const language = req.body.language;
   if (!file) return res.status(400).json({ error: "No PDF uploaded" });
@@ -644,7 +658,7 @@ app.post("/api/ghs/extract", upload.single("file"), checkUsage, async (req, res)
 });
 
 // Batch extraction
-app.post("/api/ghs/extract-batch", upload.array("files", 10), checkUsage, async (req, res) => {
+app.post("/api/ghs/extract-batch", anonQuotaGate, upload.array("files", 10), checkUsage, async (req, res) => {
   const files = req.files;
   const language = req.body.language;
   if (!files || files.length === 0) return res.status(400).json({ error: "No PDF files uploaded" });
@@ -677,7 +691,7 @@ app.post("/api/ghs/extract-batch", upload.array("files", 10), checkUsage, async 
 });
 
 // Transport extraction (single)
-app.post("/api/transport/extract", upload.single("file"), checkUsage, async (req, res) => {
+app.post("/api/transport/extract", anonQuotaGate, upload.single("file"), checkUsage, async (req, res) => {
   const file = req.file;
   const language = req.body.language;
   if (!file) return res.status(400).json({ error: "No PDF uploaded" });
@@ -692,7 +706,7 @@ app.post("/api/transport/extract", upload.single("file"), checkUsage, async (req
 });
 
 // Transport batch extraction
-app.post("/api/transport/extract-batch", upload.array("files", 10), checkUsage, async (req, res) => {
+app.post("/api/transport/extract-batch", anonQuotaGate, upload.array("files", 10), checkUsage, async (req, res) => {
   const files = req.files;
   const language = req.body.language;
   if (!files || files.length === 0) return res.status(400).json({ error: "No PDF files uploaded" });
@@ -775,7 +789,7 @@ async function extractWithPrompt(buffer, language, filename, systemPrompt, logTa
 }
 
 function batchRoute(path, promptFn, logTag, mode) {
-  app.post(path, upload.array("files", 10), checkUsage, async (req, res) => {
+  app.post(path, anonQuotaGate, upload.array("files", 10), checkUsage, async (req, res) => {
     const files = req.files;
     const language = req.body.language;
     if (!files || files.length === 0) return res.status(400).json({ error: "No PDF files uploaded" });

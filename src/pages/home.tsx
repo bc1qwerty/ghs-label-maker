@@ -55,6 +55,7 @@ export default function Home() {
   const [results, setResults] = React.useState<BatchResultItem[]>([]);
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = React.useState(false);
+  const [pdfError, setPdfError] = React.useState<string | null>(null);
   const [userPubkey, setUserPubkey] = React.useState<string | null>(null);
   const [needsPayment, setNeedsPayment] = React.useState(false);
   const [userInfo, setUserInfo] = React.useState<{
@@ -244,6 +245,7 @@ export default function Home() {
     if (successResults.length === 0) return;
 
     setIsGeneratingPdf(true);
+    setPdfError(null);
     try {
       const { default: jsPDF } = await import("jspdf");
       const { toJpeg } = await import("html-to-image");
@@ -314,6 +316,7 @@ export default function Home() {
       pdf.save(pdfFilename);
     } catch (err) {
       console.error("PDF generation failed:", err);
+      setPdfError("Could not generate the PDF. Please try again.");
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -338,7 +341,7 @@ export default function Home() {
                 {/* Notice */}
                 <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs text-muted-foreground leading-relaxed">
                   <p className="font-semibold text-emerald-600 dark:text-emerald-400 mb-1">Free Trial</p>
-                  <p>Your first 3 extractions are free — no account needed. After that, pay per use with Bitcoin Lightning. No subscriptions, no hidden fees.</p>
+                  <p>Your first 3 extractions are free — sign in with a Lightning wallet, no payment needed. After that, pay per use with Bitcoin Lightning. No subscriptions, no hidden fees.</p>
                 </div>
 
                 {/* How it works */}
@@ -430,6 +433,13 @@ export default function Home() {
                   onDragOver={handleDragOver}
                   onDrop={handleDrop}
                   onClick={() => fileInputRef.current?.click()}
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Upload PDF files"
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInputRef.current?.click(); }
+                  }}
                   data-testid="upload-zone"
                 >
                   <input
@@ -489,6 +499,7 @@ export default function Home() {
                             <button
                               onClick={(e) => { e.stopPropagation(); removeFile(idx); }}
                               className="text-muted-foreground hover:text-destructive"
+                              aria-label={`Remove ${file.name}`}
                               data-testid={`button-remove-file-${idx}`}
                             >
                               <X className="h-3.5 w-3.5" />
@@ -736,6 +747,10 @@ export default function Home() {
                 )}
               </div>
             </div>
+
+            {pdfError && (
+              <p role="alert" className="text-sm text-destructive print:hidden" data-testid="pdf-error">{pdfError}</p>
+            )}
 
             {/* Per-file status summary */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 print:hidden" data-testid="results-summary">
