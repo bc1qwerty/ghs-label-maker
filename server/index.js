@@ -149,6 +149,9 @@ async function getUserPubkey(req) {
 // 무료 한도는 추출이 끝나야 usage 에 적힌다. 그 사이의 동시 요청이 같은 잔여분을 보고 전부 통과하지
 // 않게, 통과시킨 무료 건수를 정산 때까지 키(pubkey 또는 ip)별로 잡아 둔다.
 const pendingFree = new Map();
+// 다른 요청이 무료분을 잡고 있어서 유료로 낸 건수(pubkey 별). 그 요청이 실패해 무료분을 못 쓰고 돌려주면
+// 그만큼 크레딧을 돌려준다 — 정산 순서에 따라 무료 3건 중 일부가 과금으로 바뀌던 것(2026-11-14 감사).
+const blockedPaid = new Map();
 // 통과시켜 아직 끝나지 않은 파일 수. aiQueue.length 는 pdf 파싱 뒤에야 늘어 동시 요청이 상한을 함께 지나간다.
 let inflightFiles = 0;
 // 실패한 추출은 과금도 무료 한도 차감도 없다 — 그것만으로 LLM 을 계속 부를 수 있어 IP 별로 시간당 묶는다.
@@ -180,6 +183,8 @@ function admitUsage(req, res, next, ip, authInfo) {
   if (freeKey) pendingFree.set(freeKey, (pendingFree.get(freeKey) || 0) + freePart);
   trackUsage(req, res, (success) => {
     inflightFiles -= fileCount;
+    // 잡아 둔 무료분 가운데 성공으로 쓰지 못하고 돌려주는 건수
+    const released = freePart - Math.min(success, freePart);
     if (freeKey) {
       const left = (pendingFree.get(freeKey) || 0) - freePart;
       if (left > 0) pendingFree.set(freeKey, left); else pendingFree.delete(freeKey);
@@ -188,10 +193,29 @@ function admitUsage(req, res, next, ip, authInfo) {
     if (authInfo.type === "paid") {
       // 성공분은 무료분부터 채운다 — 실패한 파일이 있어도 무료분을 먼저 쓴 것으로 치고 나머지만 과금한다.
       const freeUsed = Math.min(success, freePart);
-      if (freeUsed > 0) recordUsageImpl(db, stmts, authInfo.pubkey, ip, freeUsed);
-      settlePaidUsageImpl(db, stmts, authInfo.pubkey, ip, authInfo.reserved, success - freeUsed, authInfo.reservationId);
+      // 입장 때는 다른 요청이 잡아 둔 무료분 때문에 유료로 들어왔어도, 그 요청이 실패해 무료분이 돌아왔으면
+      // 지금 남은 무료 여유만큼은 무료로 돌린다(동기 구간이라 다른 정산과 섞이지 않는다).
+      let extra = 0;
+      if (success - freeUsed > 0) {
+        const { cnt } = stmts.countByPubkey.get(authInfo.pubkey);
+        const slack = FREE_LIMIT - cnt - freeUsed - (pendingFree.get(authInfo.pubkey) || 0);
+        extra = Math.max(0, Math.min(success - freeUsed, slack));
+      }
+      if (freeUsed + extra > 0) recordUsageImpl(db, stmts, authInfo.pubkey, ip, freeUsed + extra);
+      const paidUsed = success - freeUsed - extra;
+      settlePaidUsageImpl(db, stmts, authInfo.pubkey, ip, authInfo.reserved, paidUsed, authInfo.reservationId);
+      // 아직 다른 요청이 잡고 있는 무료분 때문에 낸 몫은 적어 둔다 — 그 요청이 무료분을 돌려주면 환급한다.
+      const blocked = Math.min(paidUsed, pendingFree.get(authInfo.pubkey) || 0);
+      if (blocked > 0) blockedPaid.set(authInfo.pubkey, (blockedPaid.get(authInfo.pubkey) || 0) + blocked);
     } else {
       recordUsageImpl(db, stmts, authInfo.pubkey, ip, success);
+    }
+    if (authInfo.pubkey) {
+      const owed = blockedPaid.get(authInfo.pubkey) || 0;
+      const refund = Math.min(released, owed);
+      if (refund > 0) stmts.refundCredits.run(refund, authInfo.pubkey);
+      if (owed - refund > 0 && pendingFree.has(authInfo.pubkey)) blockedPaid.set(authInfo.pubkey, owed - refund);
+      else blockedPaid.delete(authInfo.pubkey);
     }
   });
   return next();

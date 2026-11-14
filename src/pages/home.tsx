@@ -58,6 +58,9 @@ export default function Home() {
   const [pdfError, setPdfError] = React.useState<string | null>(null);
   const [userPubkey, setUserPubkey] = React.useState<string | null>(null);
   const [needsPayment, setNeedsPayment] = React.useState(false);
+  // 402 때 모자란 파일 수(올린 수 − 남은 무료분 − 크레딧). 결제창은 이만큼만 사게 한다.
+  const [shortfall, setShortfall] = React.useState<number | null>(null);
+  React.useEffect(() => { setShortfall(null); }, [files]);
   const [userInfo, setUserInfo] = React.useState<{
     totalUsed: number; credits: number; plan: string;
     planExpiresAt: number; freeRemaining: number;
@@ -209,13 +212,15 @@ export default function Home() {
       }
 
       if (response.status === 402) {
-        const err = await response.json().catch(() => ({})) as { needsLogin?: boolean; message?: string; credits?: number };
+        const err = await response.json().catch(() => ({})) as { needsLogin?: boolean; message?: string; credits?: number; freeRemaining?: number };
         if (err.needsLogin) {
           // SDK 는 로그인 상태인데 서버 세션만 만료된 경우에도 needsLogin 이 온다 — 결제창이 아니라 로그인 창.
           requestLogin(userPubkey ? "Your session expired. Please login again." : "Free trial exhausted. Please login and purchase credits.");
         } else {
-          // 크레딧이 남았는데 파일 수가 더 많은 경우는 서버가 그 사실을 문구로 준다.
-          setApiError(err.credits && err.message ? err.message : "Free trial exhausted. Please purchase credits.");
+          // 무료분이나 크레딧이 남았는데 파일 수가 더 많은 경우는 서버가 그 사실을 문구로 준다.
+          const have = (err.credits || 0) + (err.freeRemaining || 0);
+          setApiError(have > 0 && err.message ? err.message : "Free trial exhausted. Please purchase credits.");
+          setShortfall(Math.max(1, files.length - have));
           setNeedsPayment(true);
         }
         setProcessingStatus("idle");
@@ -634,7 +639,7 @@ export default function Home() {
                 {needsPayment && userPubkey && (
                   <PaymentModal
                     pubkey={userPubkey}
-                    fileCount={files.length > 0 ? files.length : undefined}
+                    fileCount={shortfall ?? (files.length > 0 ? files.length : undefined)}
                     onClose={() => setNeedsPayment(false)}
                     onPaid={() => { setNeedsPayment(false); setApiError(null); fetchUserInfo(); }}
                   />

@@ -41,6 +41,8 @@ npm test          # node --test (deploy.sh 도 먼저 돌린다)
 - `LLM_LOCAL_URL` -- 기본 `http://127.0.0.1:8080/v1/chat/completions`
 - `LLM_LOCAL_TIMEOUT_MS` -- 기본 180000 (로컬은 생성이 직렬이라 넉넉히)
 - `LLM_FALLBACK=off` -- 폴백을 끄고 로컬 전용으로 (기본은 켜짐)
+- `GHS_IP_SECRET` -- 90일 지난 익명 사용 행의 IP 를 HMAC 가명으로 바꿀 때 쓰는 비밀값. 없으면 DB 옆 `server/.ghs-ip-secret`(0600)을 처음 기동 때 만들어 쓴다. **이 파일을 잃으면 가명 행이 안 맞아 그 IP 들의 무료 3건이 다시 열린다** — DB 를 백업하면 함께 둔다(`.gitignore` 대상, `deploy.sh` 가 지우지 않는다).
+  - 2026-11-14 17:23~18:12 에는 `PHOENIXD_PASSWORD` 파생값으로 가명화했다. 그 몇 행은 지금도 옛 파생값으로 함께 대조하지만, 결제 비밀번호를 바꾸면 더는 맞지 않는다(한 번만 생긴 일이라 그대로 둔다).
 
 ## AI 경로 (2026-08-21)
 추출은 **mac 의 로컬 MLX 서버**에서 돈다. 앱은 VPS 에 있으므로 mac 이 여는 SSH

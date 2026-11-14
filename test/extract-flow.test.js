@@ -38,14 +38,14 @@ test("추출 흐름: 작은 PDF·무료 한도 경합·운송 불리언·문서 
   const auth = new Database(path.join(tmp, "auth.db"));
   auth.exec("CREATE TABLE users(id INTEGER PRIMARY KEY, pubkey TEXT); CREATE TABLE sessions(token TEXT PRIMARY KEY, user_id INTEGER, expires_at INTEGER);"
     + "INSERT INTO users VALUES(1,'pkbuyer'); INSERT INTO sessions VALUES('tokbuyer',1,unixepoch()+9999);"
-    + ["mix", "nocred", "part", "short", "full"].map((n, i) => `INSERT INTO users VALUES(${i + 2},'pk${n}'); INSERT INTO sessions VALUES('tok${n}',${i + 2},unixepoch()+9999);`).join(""));
+    + ["mix", "nocred", "part", "short", "full", "race", "racetwo"].map((n, i) => `INSERT INTO users VALUES(${i + 2},'pk${n}'); INSERT INTO sessions VALUES('tok${n}',${i + 2},unixepoch()+9999);`).join(""));
   auth.close();
   // 크레딧을 먼저 산 새 계정 — 무료 3건을 아직 안 썼다.
   {
     const { db: seed } = (await import("../server/db.js")).createDb(path.join(tmp, "ghs.db"));
     seed.prepare("INSERT INTO credits (pubkey, amount, plan, plan_expires_at) VALUES ('pkbuyer', 5, 'credits', 0)").run();
     // 묶음 정산용 계정들: mix·nocred 는 무료 2건을 이미 썼다.
-    for (const [pk, amount] of [["pkmix", 5], ["pkpart", 5], ["pkshort", 1], ["pkfull", 5]]) {
+    for (const [pk, amount] of [["pkmix", 5], ["pkpart", 5], ["pkshort", 1], ["pkfull", 5], ["pkrace", 2], ["pkracetwo", 5]]) {
       seed.prepare("INSERT INTO credits (pubkey, amount, plan, plan_expires_at) VALUES (?, ?, 'credits', 0)").run(pk, amount);
     }
     for (const pk of ["pkmix", "pkmix", "pknocred", "pknocred"]) seed.prepare("INSERT INTO usage (pubkey, ip) VALUES (?, '10.9.9.9')").run(pk);
@@ -64,7 +64,7 @@ test("추출 흐름: 작은 PDF·무료 한도 경합·운송 불리언·문서 
         out = mark === "MARK-empty" ? {} : { productName: mark, unNumber: "UN1230", hazardClass: "3", notRegulated: "false", marinePollutant: "false" };
       } else if (prompt.includes("16-section")) {
         out = mark === "MARK-array" ? [1, 2] : { productName: mark, sections: { 1: null, 2: { title: 3, content: ["x"] } } };
-      } else if (mark.startsWith("MARK-bad")) {
+      } else if (mark.startsWith("MARK-bad") || mark.endsWith("bad")) {
         out = {}; // 불완전한 응답 → 그 파일은 실패
       } else {
         out = { productName: mark, supplier: "s", signalWord: "DANGER", pictograms: [null, { code: "GHS02" }], hazardStatements: ["H225 x"], precautionaryStatements: [] };
@@ -72,7 +72,7 @@ test("추출 흐름: 작은 PDF·무료 한도 경합·운송 불리언·문서 
       setTimeout(() => {
         res.setHeader("content-type", "application/json");
         res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(out) } }] }));
-      }, 300);
+      }, mark.startsWith("MARK-slow") ? 1500 : 300);
     });
   });
   llm.listen(0, "127.0.0.1");
@@ -181,6 +181,28 @@ test("추출 흐름: 작은 PDF·무료 한도 경합·운송 불리언·문서 
   // 전부 실패 → 차감 0
   assert.equal((await batchAs("full", ["bad3", "bad4"])).status, 200);
   assert.deepEqual(state("full"), { credits: 3, used: 5, reserved: 0 });
+
+  // 동시 요청: 무료분을 잡아 둔 요청이 실패해 무료분이 돌아오면, 그 사이 유료로 들어온 요청은 정산 때 무료로 돌린다.
+  // 크레딧 2 인 새 계정 — A(2파일, 느림)·B(1파일, 실패)·C(1파일) 순으로 거의 동시에. 성공 3건 = 무료 3건이라 차감 0.
+  const raceA = batchAs("race", ["slow1", "slow2"]);
+  await new Promise((r) => setTimeout(r, 60));
+  const raceB = batchAs("race", ["bad5"]);
+  await new Promise((r) => setTimeout(r, 60));
+  const raceC = batchAs("race", ["r1"]);
+  const raced = await Promise.all([raceA, raceB, raceC]);
+  assert.deepEqual(raced.map((r) => r.status), [200, 200, 200]);
+  assert.deepEqual(state("race"), { credits: 2, used: 3, reserved: 0 });
+  // 무료분을 다 쓴 뒤에는 정상으로 차감한다.
+  assert.equal((await batchAs("race", ["r2"])).status, 200);
+  assert.deepEqual(state("race"), { credits: 1, used: 4, reserved: 0 });
+
+  // 반대 순서: 유료로 먼저 정산된 뒤에 무료분을 잡고 있던 요청이 실패해 돌려주면 그만큼 환급한다.
+  // 크레딧 5 인 새 계정 — A(2파일, 느림, 1개 실패)·B(3파일). 성공 4건 = 무료 3 + 유료 1.
+  const twoA = batchAs("racetwo", ["slowa", "slowbad"]);
+  await new Promise((r) => setTimeout(r, 60));
+  const twoB = batchAs("racetwo", ["t1", "t2", "t3"]);
+  assert.deepEqual((await Promise.all([twoA, twoB])).map((r) => r.status), [200, 200]);
+  assert.deepEqual(state("racetwo"), { credits: 4, used: 4, reserved: 0 });
 
   // 운송: "false" 문자열은 거짓이다. 빈 응답은 실패다.
   const tr = await send("/api/transport/extract", "file", ["t1"], "10.3.0.1");
