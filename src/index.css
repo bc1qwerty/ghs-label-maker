@@ -189,4 +189,16 @@
   .print-only {
     display: block !important;
   }
+  /* 다크 테마로 «배경 그래픽» 을 켜고 인쇄하면 라벨 둘레가 검게 나왔다 — 인쇄는 늘 흰 바탕이다. */
+  html, body, #root, #root > div, main {
+    background: #fff !important;
+  }
+  /* 라벨 하나가 쪽 사이에서 잘리지 않게, 라벨마다 새 쪽. */
+  [data-label-index] {
+    background: #fff !important;
+    break-inside: avoid;
+  }
+  [data-label-index] + [data-label-index], div:has(> [data-label-index]) + div:has(> [data-label-index]) {
+    break-before: page;
+  }
 }

@@ -6,11 +6,11 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
-import { createDb } from "./db.js";
+import { createDb, ipTag, pseudonymizeOldAnonIps } from "./db.js";
 import { PLANS, isValidBatchCount, trackUsage, calcBatchPrice, settlePayment, reconcilePendingPayments, recordUsage as recordUsageImpl, reserve as reserveImpl, settlePaidUsage as settlePaidUsageImpl, refundStaleReservations } from "./payments.js";
 import { complete, extractJson, llmStats } from "./llm.js";
 import { getClientIp, crossOriginGuard } from "./client-ip.js";
-import { normalizeGhsData } from "./ghs-normalize.js";
+import { normalizeGhsData, pdfBytes, shapeDocument } from "./ghs-normalize.js";
 
 // Load .env from the working directory (node 22+ builtin). The VPS pm2
 // process used to depend on env vars captured at first `pm2 start` — a
@@ -38,6 +38,8 @@ const { db, stmts } = createDb(process.env.GHS_DB_PATH || path.join(__dirname, "
 const FREE_LIMIT = 3;
 const PHOENIXD_URL = process.env.PHOENIXD_URL || "http://127.0.0.1:9740";
 const PHOENIXD_PASSWORD = process.env.PHOENIXD_PASSWORD || "";
+// 익명 사용량의 IP 가명에 쓰는 비밀값. 따로 둘 env 가 없어 기존 서버 비밀값에서 파생한다(DB 에는 없다).
+const IP_SECRET = PHOENIXD_PASSWORD ? `ghs-usage-ip:${PHOENIXD_PASSWORD}` : "";
 
 // PLANS / calcBatchPrice / settlePayment live in server/payments.js.
 
@@ -104,14 +106,19 @@ const authStmt = authDb ? authDb.prepare("SELECT u.pubkey FROM sessions s JOIN u
 // Session cache to avoid DB reads on every request
 const sessionCache = new Map(); // token → { pubkey, expires }
 setInterval(() => { const now = Date.now(); for (const [k,v] of sessionCache) { if (now > v.expires) sessionCache.delete(k); } }, 300_000);
-setInterval(() => { try { stmts.deleteOldHistory.run(); } catch (e) { console.error("[GHS] History cleanup error:", e.message); } }, 3600_000);
-try { stmts.deleteOldHistory.run(); } catch {}
+function hourlyCleanup() {
+  try { stmts.deleteOldHistory.run(); stmts.forgetOldUsageIps.run(); pseudonymizeOldAnonIps(stmts, IP_SECRET); } catch (e) { console.error("[GHS] History cleanup error:", e.message); }
+}
+setInterval(hourlyCleanup, 3600_000);
+hourlyCleanup();
 
 function readCookie(req, name) {
   const c = req.headers.cookie;
   if (!c) return null;
   const m = c.match(new RegExp("(?:^|;\\s*)" + name + "=([^;]+)"));
-  return m ? decodeURIComponent(m[1]) : null;
+  if (!m) return null;
+  // 깨진 퍼센트 인코딩(`%E0%A4%A`)은 URIError 를 던진다 — 로그아웃으로 읽는다.
+  try { return decodeURIComponent(m[1]); } catch { return null; }
 }
 
 async function getUserPubkey(req) {
@@ -135,9 +142,43 @@ async function getUserPubkey(req) {
 
 // ─── Auth & Usage check middleware ───
 // 사용량 정산은 trackUsage(payments.js) 가 한 번만 한다 — 조기 끊김 처리는 거기 주석.
+// 무료 한도는 추출이 끝나야 usage 에 적힌다. 그 사이의 동시 요청이 같은 잔여분을 보고 전부 통과하지
+// 않게, 통과시킨 무료 건수를 정산 때까지 키(pubkey 또는 ip)별로 잡아 둔다.
+const pendingFree = new Map();
+// 통과시켜 아직 끝나지 않은 파일 수. aiQueue.length 는 pdf 파싱 뒤에야 늘어 동시 요청이 상한을 함께 지나간다.
+let inflightFiles = 0;
+// 실패한 추출은 과금도 무료 한도 차감도 없다 — 그것만으로 LLM 을 계속 부를 수 있어 IP 별로 시간당 묶는다.
+const FAIL_LIMIT = 20;
+const failures = new Map(); // ip → { windowStart, count }
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of failures) if (now - v.windowStart > 3600_000) failures.delete(k);
+}, 600_000).unref();
+function failureCount(ip) {
+  const f = failures.get(ip);
+  return f && Date.now() - f.windowStart <= 3600_000 ? f.count : 0;
+}
+function noteFailures(ip, n) {
+  if (n <= 0) return;
+  const now = Date.now();
+  let f = failures.get(ip);
+  if (!f || now - f.windowStart > 3600_000) { f = { windowStart: now, count: 0 }; failures.set(ip, f); }
+  f.count += n;
+}
+
 function admitUsage(req, res, next, ip, authInfo) {
   req.authInfo = authInfo;
+  const fileCount = authInfo.fileCount || 0;
+  const freeKey = authInfo.type === "paid" ? null : (authInfo.pubkey || `ip:${ip}`);
+  inflightFiles += fileCount;
+  if (freeKey) pendingFree.set(freeKey, (pendingFree.get(freeKey) || 0) + fileCount);
   trackUsage(req, res, (success) => {
+    inflightFiles -= fileCount;
+    if (freeKey) {
+      const left = (pendingFree.get(freeKey) || 0) - fileCount;
+      if (left > 0) pendingFree.set(freeKey, left); else pendingFree.delete(freeKey);
+    }
+    noteFailures(ip, fileCount - success);
     if (authInfo.type === "paid") {
       settlePaidUsageImpl(db, stmts, authInfo.pubkey, ip, authInfo.reserved, success, authInfo.reservationId);
     } else {
@@ -154,25 +195,30 @@ async function checkUsage(req, res, next) {
 
   // AI 호출은 동시 3건이고 나머지는 줄을 선다. 줄에 상한이 없으면 무료 요청이 쌓여 유료 사용자의
   // 대기가 타임아웃(→ 폴백 과금)까지 늘어난다. 예약·사용량 기록 전에 돌려보낸다.
-  if (aiQueue.length + fileCount > MAX_AI_QUEUE) {
+  if (inflightFiles + fileCount > MAX_AI_QUEUE + MAX_CONCURRENT_AI) {
     res.set("Retry-After", "60");
     return res.status(503).json({ error: "Server busy", message: "Too many extractions in progress. Please retry in a minute." });
   }
+  if (failureCount(ip) >= FAIL_LIMIT) {
+    res.set("Retry-After", "3600");
+    return res.status(429).json({ error: "Too many failed extractions", message: "Too many failed extractions from this address. Try again in an hour." });
+  }
 
   if (pubkey) {
+    // 무료 체험(로그인)을 크레딧보다 먼저 쓴다 — 크레딧을 먼저 사면 유료 사용이 usage 를 채워 무료 3건이 사라졌다.
+    // 카운트 기반이고 돈이 안 걸려 예약 없이 둔다.
+    const { cnt } = stmts.countByPubkey.get(pubkey);
+    if (cnt + (pendingFree.get(pubkey) || 0) + fileCount <= FREE_LIMIT) {
+      return admitUsage(req, res, next, ip, { pubkey, type: "free", remaining: FREE_LIMIT - cnt - fileCount, fileCount });
+    }
+
     // 유료: 원자적으로 예약(amount >= fileCount 일 때만 한 번에 차감). 동시
     // 요청이 모두 checkUsage 를 지나쳐 1크레딧으로 N회 추출하던 TOCTOU 를 닫는다
     // (2026-08-31 감사). 크레딧은 만료되지 않으므로 잔액 리셋은 하지 않는다.
     // 추출 실패분은 응답 정산에서 환급된다.
     const reservationId = fileCount > 0 ? reserveImpl(db, stmts, pubkey, fileCount) : 0;
     if (reservationId) {
-      return admitUsage(req, res, next, ip, { pubkey, type: "paid", reserved: fileCount, reservationId });
-    }
-
-    // 무료 체험(로그인): 카운트 기반. 무료는 돈이 안 걸려 예약 없이 둔다.
-    const { cnt } = stmts.countByPubkey.get(pubkey);
-    if (cnt + fileCount <= FREE_LIMIT) {
-      return admitUsage(req, res, next, ip, { pubkey, type: "free", remaining: FREE_LIMIT - cnt - fileCount });
+      return admitUsage(req, res, next, ip, { pubkey, type: "paid", reserved: fileCount, reservationId, fileCount });
     }
 
     // 크레딧이 있는데도 여기 왔다면 요청한 파일 수보다 잔액이 적은 것이다 — «소진» 이 아니라 그렇게 알린다.
@@ -190,9 +236,9 @@ async function checkUsage(req, res, next) {
   }
 
   // Anonymous: check by IP
-  const { cnt } = stmts.countByIp.get(ip);
-  if (cnt + fileCount <= FREE_LIMIT) {
-    return admitUsage(req, res, next, ip, { pubkey: null, ip, type: "anonymous", remaining: FREE_LIMIT - cnt - fileCount });
+  const { cnt } = stmts.countByIp.get(ip, ipTag(IP_SECRET, ip));
+  if (cnt + (pendingFree.get(`ip:${ip}`) || 0) + fileCount <= FREE_LIMIT) {
+    return admitUsage(req, res, next, ip, { pubkey: null, ip, type: "anonymous", remaining: FREE_LIMIT - cnt - fileCount, fileCount });
   }
 
   return res.status(402).json({
@@ -208,7 +254,13 @@ async function checkUsage(req, res, next) {
 // 업로드(multer, 최대 10×10MB 메모리)보다 먼저 선다: 무료 한도를 다 쓴 익명 IP 의 본문은 읽지 않는다.
 async function anonQuotaGate(req, res, next) {
   if (await getUserPubkey(req)) return next();
-  const { cnt } = stmts.countByIp.get(getClientIp(req));
+  // 화면은 로그인 상태라고 믿는데(SDK) 서버 세션만 만료된 요청. 익명 무료분으로 조용히 처리하면
+  // 본인 계정의 크레딧·기록과 무관하게 돌아간다 — 본문을 읽기 전에 다시 로그인하라고 돌려보낸다.
+  if (req.get("x-ghs-expect-session") === "1") {
+    return res.status(401).json({ error: "Session expired", message: "Your session expired. Please login again.", needsLogin: true });
+  }
+  const gateIp = getClientIp(req);
+  const { cnt } = stmts.countByIp.get(gateIp, ipTag(IP_SECRET, gateIp));
   if (cnt < FREE_LIMIT) return next();
   return res.status(402).json({
     error: "Usage limit reached",
@@ -290,7 +342,7 @@ function phoenixdAuth() {
 
 // Batch price calculator
 app.get("/api/payment/price/:count", (req, res) => {
-  const count = parseInt(req.params.count) || 0;
+  const count = /^\d{1,2}$/.test(req.params.count) ? Number(req.params.count) : 0;
   if (count <= 0 || count > 30) return res.status(400).json({ error: "Count must be 1-30" });
   res.json(calcBatchPrice(count));
 });
@@ -300,7 +352,7 @@ app.get("/api/payment/price/:count", (req, res) => {
 //   임의 pubkey 로 phoenixd 인보이스를 남발할 수 있다. 세션 검증(requireAuth)을
 //   거쳐 req.verifiedPubkey 만 쓴다 — 다른 로그인 게이트 라우트와 동일.
 app.post("/api/payment/create-batch", express.json(), requireAuth, async (req, res) => {
-  const { fileCount } = req.body;
+  const { fileCount } = req.body || {};
   const pubkey = req.verifiedPubkey;
   if (!isValidBatchCount(fileCount)) return res.status(400).json({ error: "File count must be 1-30" });
   if (!PHOENIXD_PASSWORD) return res.status(503).json({ error: "Payment not configured" });
@@ -335,7 +387,7 @@ app.post("/api/payment/create-batch", express.json(), requireAuth, async (req, r
 
 // Create invoice (plan-based)
 app.post("/api/payment/create", express.json(), requireAuth, async (req, res) => {
-  const { plan } = req.body;
+  const { plan } = req.body || {};
   const pubkey = req.verifiedPubkey;
   if (typeof plan !== "string" || !Object.hasOwn(PLANS, plan)) return res.status(400).json({ error: "Invalid plan" });
   if (!PHOENIXD_PASSWORD) return res.status(503).json({ error: "Payment not configured" });
@@ -455,11 +507,17 @@ function decodeFilename(name) {
   try { return Buffer.from(name, "latin1").toString("utf8"); } catch { return name; }
 }
 
+const LANGUAGES = ["en", "ko", "ja", "zh", "de", "fr", "es", "pt", "th", "vi"];
+// language 는 프롬프트에 그대로 들어간다 — 목록 밖 값(긴 문자열·지시문)은 LLM 을 부르기 전에 돌려보낸다.
+function badLanguage(language) {
+  return typeof language !== "string" || !LANGUAGES.includes(language);
+}
+
 // ─── GHS extraction ───
 async function extractGhsFromBuffer(buffer, language, filename) {
   let pdfText = "";
   try {
-    const result = await pdfParse(buffer);
+    const result = await pdfParse(pdfBytes(buffer));
     pdfText = result.text;
     console.log(`[GHS] Parsed ${filename}: ${result.numpages} pages, ${pdfText.length} chars`);
   } catch (err) {
@@ -512,12 +570,13 @@ Rules:
     if (!rawContent) return { success: false, error: "AI returned empty response" };
 
     const ghsData = extractJson(rawContent);
-    if (!ghsData) return { success: false, error: "Failed to parse AI response" };
+    if (!ghsData || typeof ghsData !== "object" || Array.isArray(ghsData)) return { success: false, error: "Failed to parse AI response" };
 
     if (!ghsData.productName || !ghsData.signalWord) return { success: false, error: "Incomplete GHS information" };
 
     const pictograms = (Array.isArray(ghsData.pictograms) ? ghsData.pictograms : [])
-      .map(p => ({ code: p.code ? normalizePictogramCode(p.code) : "", name: p.name }))
+      .filter(p => p && typeof p === "object")
+      .map(p => ({ code: p.code ? normalizePictogramCode(String(p.code)) : "", name: p.name }))
       .filter(p => GHS_PICTOGRAM_CODES.includes(p.code))
       .map(p => ({ code: p.code, name: p.name ?? picNames[p.code] ?? p.code }));
 
@@ -526,7 +585,9 @@ Rules:
       data: normalizeGhsData({
         productName: String(ghsData.productName ?? ""),
         supplier: String(ghsData.supplier ?? ""),
-        signalWord: String(ghsData.signalWord ?? signalWordWarning),
+        // 신호어는 라벨 언어의 두 단어뿐이다. 다른 언어로 왔으면(«Danger» 를 한국어 라벨에) 뜻으로 옮긴다.
+        signalWord: Object.values(LANG_MAP).some(l => l.danger.toLowerCase() === String(ghsData.signalWord).trim().toLowerCase())
+          ? signalWordDanger : signalWordWarning,
         pictograms,
         hazardStatements: Array.isArray(ghsData.hazardStatements) ? ghsData.hazardStatements.map(String) : [],
         // 12개로 자르던 것을 없앴다(2026-11-05). 안내 없이 잘린 문구는 라벨에서 사라진다 — 많으면 라벨이 2단·축소로 담는다.
@@ -544,12 +605,10 @@ Rules:
 }
 
 // ─── Transport extraction ───
-const TRANSPORT_CLASSES = ["1","2.1","2.2","2.3","3","4.1","4.2","4.3","5.1","5.2","6.1","6.2","7","8","9"];
-
 async function extractTransportFromBuffer(buffer, language, filename) {
   let pdfText = "";
   try {
-    const result = await pdfParse(buffer);
+    const result = await pdfParse(pdfBytes(buffer));
     pdfText = result.text;
     console.log(`[TRANSPORT] Parsed ${filename}: ${result.numpages} pages, ${pdfText.length} chars`);
   } catch (err) {
@@ -604,24 +663,30 @@ Rules:
     if (!rawContent) return { success: false, error: "AI returned empty response" };
 
     const data = extractJson(rawContent);
-    if (!data) return { success: false, error: "Failed to parse AI response" };
+    if (!data || typeof data !== "object" || Array.isArray(data)) return { success: false, error: "Failed to parse AI response" };
+
+    // 모델은 불리언을 문자열로 내기도 한다 — Boolean("false") 는 true 라 규제 물질에 «NOT REGULATED» 가 찍혔다.
+    const flag = (v) => v === true || (typeof v === "string" && v.trim().toLowerCase() === "true");
+    const notRegulated = flag(data.notRegulated);
+    // 빈 응답을 «규제 대상 아님» 으로 채워 성공시키지 않는다.
+    if (!notRegulated && (!data.unNumber || !data.hazardClass)) return { success: false, error: "Incomplete transport information" };
 
     return {
       success: true,
       data: {
         productName: String(data.productName ?? ""),
-        unNumber: String(data.unNumber ?? "Not regulated"),
+        unNumber: String(data.unNumber ?? (notRegulated ? "Not regulated" : "")),
         properShippingName: String(data.properShippingName ?? ""),
         hazardClass: String(data.hazardClass ?? ""),
         subsidiaryRisks: Array.isArray(data.subsidiaryRisks) ? data.subsidiaryRisks.map(String) : [],
         packingGroup: data.packingGroup ? String(data.packingGroup) : null,
-        marinePollutant: Boolean(data.marinePollutant),
+        marinePollutant: flag(data.marinePollutant),
         transportCategory: data.transportCategory ? String(data.transportCategory) : null,
         specialProvisions: Array.isArray(data.specialProvisions) ? data.specialProvisions.map(String) : [],
         tunnelRestrictionCode: data.tunnelRestrictionCode ? String(data.tunnelRestrictionCode) : null,
         emergencyAction: data.emergencyAction ? String(data.emergencyAction) : null,
         additionalInfo: data.additionalInfo ? String(data.additionalInfo) : null,
-        notRegulated: Boolean(data.notRegulated),
+        notRegulated,
         language: language,
       },
     };
@@ -634,7 +699,7 @@ Rules:
 // ─── Upload config ───
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024, fieldSize: 1024, fields: 2 },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype === "application/pdf") cb(null, true);
     else cb(new Error("Only PDF files are allowed"));
@@ -648,7 +713,7 @@ app.post("/api/ghs/extract", anonQuotaGate, upload.single("file"), checkUsage, a
   const file = req.file;
   const language = req.body.language;
   if (!file) return res.status(400).json({ error: "No PDF uploaded" });
-  if (!language) return res.status(400).json({ error: "Language is required" });
+  if (badLanguage(language)) return res.status(400).json({ error: "Language is required" });
 
   const filename = decodeFilename(file.originalname);
   const result = await extractGhsFromBuffer(file.buffer, language, filename);
@@ -663,7 +728,7 @@ app.post("/api/ghs/extract-batch", anonQuotaGate, upload.array("files", 10), che
   const files = req.files;
   const language = req.body.language;
   if (!files || files.length === 0) return res.status(400).json({ error: "No PDF files uploaded" });
-  if (!language) return res.status(400).json({ error: "Language is required" });
+  if (badLanguage(language)) return res.status(400).json({ error: "Language is required" });
 
   console.log(`[GHS] Batch: ${files.length} files, language=${language}`);
 
@@ -696,7 +761,7 @@ app.post("/api/transport/extract", anonQuotaGate, upload.single("file"), checkUs
   const file = req.file;
   const language = req.body.language;
   if (!file) return res.status(400).json({ error: "No PDF uploaded" });
-  if (!language) return res.status(400).json({ error: "Language is required" });
+  if (badLanguage(language)) return res.status(400).json({ error: "Language is required" });
 
   const filename = decodeFilename(file.originalname);
   const result = await extractTransportFromBuffer(file.buffer, language, filename);
@@ -711,7 +776,7 @@ app.post("/api/transport/extract-batch", anonQuotaGate, upload.array("files", 10
   const files = req.files;
   const language = req.body.language;
   if (!files || files.length === 0) return res.status(400).json({ error: "No PDF files uploaded" });
-  if (!language) return res.status(400).json({ error: "Language is required" });
+  if (badLanguage(language)) return res.status(400).json({ error: "Language is required" });
 
   console.log(`[TRANSPORT] Batch: ${files.length} files, language=${language}`);
 
@@ -763,7 +828,7 @@ app.delete("/api/history/:pubkey/:id", requireAuth, (req, res) => {
 async function extractWithPrompt(buffer, language, filename, systemPrompt, logTag) {
   let pdfText = "";
   try {
-    const result = await pdfParse(buffer);
+    const result = await pdfParse(pdfBytes(buffer));
     pdfText = result.text;
     console.log(`[${logTag}] Parsed ${filename}: ${result.numpages} pages, ${pdfText.length} chars`);
   } catch (err) {
@@ -780,7 +845,7 @@ async function extractWithPrompt(buffer, language, filename, systemPrompt, logTa
       4096,
     );
     if (!rawContent) return { success: false, error: "AI returned empty response" };
-    const data = extractJson(rawContent);
+    const data = shapeDocument(extractJson(rawContent));
     if (!data) return { success: false, error: "Failed to parse AI response" };
     return { success: true, data };
   } catch (err) {
@@ -794,7 +859,7 @@ function batchRoute(path, promptFn, logTag, mode) {
     const files = req.files;
     const language = req.body.language;
     if (!files || files.length === 0) return res.status(400).json({ error: "No PDF files uploaded" });
-    if (!language) return res.status(400).json({ error: "Language is required" });
+    if (badLanguage(language)) return res.status(400).json({ error: "Language is required" });
     console.log(`[${logTag}] Batch: ${files.length} files, language=${language}`);
     const results = await Promise.all(files.map(async (file) => {
       const filename = decodeFilename(file.originalname);

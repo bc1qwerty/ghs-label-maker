@@ -8,8 +8,26 @@ interface GhsLabelProps {
 
 const DANGER_WORDS = new Set(["Danger", "위험", "危険", "危险", "Gefahr", "Peligro", "Perigo", "อันตราย", "Nguy hiểm"]);
 
+// 라벨의 고정 표제. 각 언어의 GHS 공식 용어를 쓴다 — ko: 고용노동부 고시, ja: JIS Z 7253, zh: UN GHS 중문판,
+// de·fr·es·pt: EU CLP 규정의 각 언어판. th·vi 는 공식 용어를 확인하지 못해 영어로 둔다(틀린 표제보다 낫다).
+type LabelText = { signalWord: string; warning: string; hazard: string; precaution: string; supplier: string; noSupplier: string; emergency: string };
+const EN_TEXT: LabelText = {
+  signalWord: "Signal Word", warning: "WARNING", hazard: "Hazard Statements", precaution: "Precautionary Statements",
+  supplier: "Supplier Information", noSupplier: "Supplier information not provided", emergency: "Emergency Contact",
+};
+const LABEL_TEXT: Record<string, LabelText> = {
+  en: EN_TEXT,
+  ko: { signalWord: "신호어", warning: "경고", hazard: "유해·위험 문구", precaution: "예방조치 문구", supplier: "공급자 정보", noSupplier: "공급자 정보 없음", emergency: "비상 연락처" },
+  ja: { signalWord: "注意喚起語", warning: "警告", hazard: "危険有害性情報", precaution: "注意書き", supplier: "供給者情報", noSupplier: "供給者情報なし", emergency: "緊急連絡先" },
+  zh: { signalWord: "信号词", warning: "警告", hazard: "危险说明", precaution: "防范说明", supplier: "供应商信息", noSupplier: "未提供供应商信息", emergency: "应急电话" },
+  de: { signalWord: "Signalwort", warning: "ACHTUNG", hazard: "Gefahrenhinweise", precaution: "Sicherheitshinweise", supplier: "Lieferant", noSupplier: "Keine Lieferantenangaben", emergency: "Notrufnummer" },
+  fr: { signalWord: "Mention d'avertissement", warning: "ATTENTION", hazard: "Mentions de danger", precaution: "Conseils de prudence", supplier: "Fournisseur", noSupplier: "Fournisseur non indiqué", emergency: "Numéro d'appel d'urgence" },
+  es: { signalWord: "Palabra de advertencia", warning: "ATENCIÓN", hazard: "Indicaciones de peligro", precaution: "Consejos de prudencia", supplier: "Proveedor", noSupplier: "Proveedor no indicado", emergency: "Teléfono de emergencia" },
+  pt: { signalWord: "Palavra-sinal", warning: "ATENÇÃO", hazard: "Advertências de perigo", precaution: "Recomendações de prudência", supplier: "Fornecedor", noSupplier: "Fornecedor não indicado", emergency: "Número de telefone de emergência" },
+};
+
 export function GhsLabel({ data }: GhsLabelProps) {
-  const isKorean = data.language === "ko";
+  const t = LABEL_TEXT[data.language] ?? LABEL_TEXT.en;
   // 서버 LANG_MAP 의 «위험» 단어들. 영·한만 보던 탓에 일·중·독·스·포 라벨의 «위험» 이 빨갛지 않았다.
   const isDanger = DANGER_WORDS.has(data.signalWord);
 
@@ -149,7 +167,7 @@ export function GhsLabel({ data }: GhsLabelProps) {
                 marginBottom: 4,
               }}
             >
-              {isKorean ? "신호어" : "Signal Word"}
+              {t.signalWord}
             </div>
             <h2
               data-testid="label-signal-word"
@@ -163,7 +181,7 @@ export function GhsLabel({ data }: GhsLabelProps) {
                 lineHeight: 1,
               }}
             >
-              {data.signalWord || (isKorean ? "경고" : "WARNING")}
+              {data.signalWord || t.warning}
             </h2>
           </div>
         </div>
@@ -197,7 +215,7 @@ export function GhsLabel({ data }: GhsLabelProps) {
                   paddingBottom: 4,
                 }}
               >
-                {isKorean ? "유해·위험 문구" : "Hazard Statements"}
+                {t.hazard}
               </div>
               <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
                 {data.hazardStatements.map((stmt, idx) => (
@@ -243,7 +261,7 @@ export function GhsLabel({ data }: GhsLabelProps) {
               paddingBottom: 4,
             }}
           >
-            {isKorean ? "예방조치 문구" : "Precautionary Statements"}
+            {t.precaution}
           </div>
           <div
             style={{
@@ -297,7 +315,7 @@ export function GhsLabel({ data }: GhsLabelProps) {
               marginBottom: 4,
             }}
           >
-            {isKorean ? "공급자 정보" : "Supplier Information"}
+            {t.supplier}
           </div>
           <div
             style={{
@@ -308,7 +326,7 @@ export function GhsLabel({ data }: GhsLabelProps) {
               lineHeight: 1.5,
             }}
           >
-            {data.supplier || (isKorean ? "공급자 정보 없음" : "Supplier information not provided")}
+            {data.supplier || t.noSupplier}
           </div>
         </div>
 
@@ -336,7 +354,7 @@ export function GhsLabel({ data }: GhsLabelProps) {
                 marginBottom: 4,
               }}
             >
-              {isKorean ? "비상 연락처" : "Emergency Contact"}
+              {t.emergency}
             </div>
             <div
               style={{

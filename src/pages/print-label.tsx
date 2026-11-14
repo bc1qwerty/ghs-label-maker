@@ -13,7 +13,9 @@ function decode(hash: string): GhsData | null {
     const data = JSON.parse(new TextDecoder().decode(bytes));
     // 모양이 어긋난 데이터를 그대로 그리면 라벨 컴포넌트가 던져 흰 화면이 된다.
     const ok = data && typeof data === "object"
-      && Array.isArray(data.pictograms) && Array.isArray(data.hazardStatements) && Array.isArray(data.precautionaryStatements);
+      && Array.isArray(data.pictograms) && data.pictograms.every((p: unknown) => p && typeof p === "object")
+      && Array.isArray(data.hazardStatements) && data.hazardStatements.every((s: unknown) => typeof s === "string")
+      && Array.isArray(data.precautionaryStatements) && data.precautionaryStatements.every((s: unknown) => typeof s === "string");
     return ok ? data : null;
   } catch {
     return null;

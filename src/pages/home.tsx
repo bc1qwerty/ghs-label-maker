@@ -65,7 +65,6 @@ export default function Home() {
   const [history, setHistory] = React.useState<Array<{
     id: number; mode: string; filename: string; created_at: number;
   }>>([]);
-  const [historyItem, setHistoryItem] = React.useState<{ mode: string; data: any } | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const labelContainerRef = React.useRef<HTMLDivElement>(null);
 
@@ -112,7 +111,6 @@ export default function Home() {
       const res = await fetch(`/api/history/${userPubkey}/${id}`);
       if (!res.ok) return;
       const item = await res.json();
-      setHistoryItem(item);
       setMode(item.mode);
       setResults([{ filename: item.filename, status: "success", data: item.data, error: null }]);
       setProcessingStatus("done");
@@ -125,15 +123,18 @@ export default function Home() {
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    const droppedFiles = Array.from(e.dataTransfer.files).filter(
-      (f) => f.type === "application/pdf"
-    );
+    const all = Array.from(e.dataTransfer.files);
+    const droppedFiles = all.filter((f) => f.type === "application/pdf");
+    if (droppedFiles.length < all.length) toast({ title: "PDF files only", description: `${all.length - droppedFiles.length} non-PDF file(s) were skipped.` });
     if (droppedFiles.length > 0) addFiles(droppedFiles);
   };
 
   const addFiles = (incoming: File[]) => {
     const existing = new Set(files.map((f) => f.name));
     const newOnes = incoming.filter((f) => !existing.has(f.name));
+    if (newOnes.length < incoming.length) {
+      toast({ title: "Already added", description: `${incoming.length - newOnes.length} file(s) with the same name were skipped.` });
+    }
     const merged = [...files, ...newOnes];
     if (merged.length > MAX_FILES) {
       toast({
@@ -145,9 +146,9 @@ export default function Home() {
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = Array.from(e.target.files ?? []).filter(
-      (f) => f.type === "application/pdf"
-    );
+    const all = Array.from(e.target.files ?? []);
+    const selected = all.filter((f) => f.type === "application/pdf");
+    if (selected.length < all.length) toast({ title: "PDF files only", description: `${all.length - selected.length} non-PDF file(s) were skipped.` });
     if (selected.length > 0) addFiles(selected);
     // Reset input so same file can be re-selected
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -196,8 +197,16 @@ export default function Home() {
       const endpoint = endpointMap[mode];
       const response = await fetch(endpoint, {
         method: "POST",
+        // 로그인 상태라고 믿고 보낸다는 표시 — 서버 세션이 만료됐으면 익명 무료분으로 처리하지 않고 401 을 준다.
+        headers: userPubkey ? { "X-Ghs-Expect-Session": "1" } : undefined,
         body: formData,
       });
+
+      if (response.status === 401) {
+        requestLogin("Your session expired. Please login again.");
+        setProcessingStatus("idle");
+        return;
+      }
 
       if (response.status === 402) {
         const err = await response.json().catch(() => ({})) as { needsLogin?: boolean; message?: string; credits?: number };
@@ -223,6 +232,8 @@ export default function Home() {
       const data = (await response.json()) as BatchResultItem[];
       setResults(data);
       setProcessingStatus("done");
+      // 크레딧·사용 수·기록은 추출로 바뀐다 — 새로고침 없이 다시 읽는다.
+      fetchUserInfo();
     } catch (err) {
       setApiError("Network error. Please check your connection and try again.");
       setProcessingStatus("idle");
@@ -238,6 +249,17 @@ export default function Home() {
   };
 
   const handlePrint = () => {
+    // A4 보다 긴 라벨은 인쇄에서 여러 쪽으로 쪼개진다 — PDF 내려받기·/print 와 같이 한 장에 들어가게 줄였다가 되돌린다.
+    const A4_RATIO = 1123 / 794;
+    const labels = Array.from(labelContainerRef.current?.querySelectorAll<HTMLElement>(
+      '[data-testid="ghs-label-container"], [data-testid="transport-label-container"]') ?? []);
+    const shrunk: HTMLElement[] = [];
+    for (const el of labels) {
+      const ratio = el.offsetWidth > 0 ? el.scrollHeight / el.offsetWidth : 0;
+      if (ratio > A4_RATIO) { el.style.zoom = String(A4_RATIO / ratio); shrunk.push(el); }
+    }
+    const restore = () => { for (const el of shrunk) el.style.zoom = ""; window.removeEventListener("afterprint", restore); };
+    window.addEventListener("afterprint", restore);
     window.print();
   };
 
@@ -258,7 +280,7 @@ export default function Home() {
       }
       // Capture just the inner label element (not the gray wrapper background)
       const labelDivs = Array.from(wrapperDivs).map(
-        (w) => w.querySelector<HTMLElement>('[data-testid="ghs-label-container"]') ?? w
+        (w) => w.querySelector<HTMLElement>('[data-testid="ghs-label-container"], [data-testid="transport-label-container"]') ?? w
       );
 
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
@@ -362,7 +384,7 @@ export default function Home() {
     <div className="min-h-[100dvh] w-full bg-background grid grid-rows-[1fr_auto]">
       {/* Header is in index.html (static, for txid-auth mount timing) */}
 
-      <main className="container mx-auto px-4 py-8 w-full">
+      <main className="container mx-auto px-4 py-8 w-full min-w-0">
         {processingStatus !== "done" ? (
           /* Upload Section — 2-column layout */
           <div className="max-w-5xl mx-auto">
@@ -433,6 +455,7 @@ export default function Home() {
                   key={m}
                   onClick={() => { setMode(m); setResults([]); setProcessingStatus("idle"); setApiError(null); }}
                   title={tooltip}
+                  aria-pressed={mode === m}
                   className={`flex-1 py-2 px-3 rounded-md text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap ${mode === m ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground"}`}
                 >
                   {label}
@@ -705,7 +728,7 @@ export default function Home() {
           /* Results Section */
           <div className="max-w-5xl mx-auto space-y-6">
             {/* Results Header */}
-            <div className="flex items-center justify-between print:hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
               <div className="space-y-1">
                 <h2 className="text-xl font-bold tracking-tight">
                   {"Generated Labels"}

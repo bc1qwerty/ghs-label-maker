@@ -89,10 +89,10 @@ export function DocumentView({ title, data, mode }: DocumentViewProps) {
             .map(([num, sec]) => (
               <div key={num} style={{ marginBottom: 16 }}>
                 <div style={{ fontSize: 13, fontWeight: 800, color: "#cc0000", borderBottom: "2px solid #eee", paddingBottom: 4, marginBottom: 6 }}>
-                  Section {num}: {sec.title || ""}
+                  Section {num}: {String(sec?.title ?? "")}
                 </div>
                 <div style={{ fontSize: 12, lineHeight: 1.6, color: "#333", whiteSpace: "pre-wrap" }}>
-                  {sec.content || "No data available"}
+                  {String(sec?.content || "No data available")}
                 </div>
               </div>
             ))}

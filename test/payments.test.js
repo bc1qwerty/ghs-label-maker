@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createDb } from "../server/db.js";
+import { createDb, ipTag, pseudonymizeOldAnonIps } from "../server/db.js";
 import { PLANS, calcBatchPrice, settlePayment, reconcilePendingPayments, recordUsage, reserveCredits, reserve, settlePaidUsage } from "../server/payments.js";
 
 // Payment/credit core paths against an in-memory DB with the exact
@@ -493,4 +493,25 @@ test("settlePaidUsage: 예약 id 로 정산하면 같은 크기의 다른 예약
   settlePaidUsage(db, stmts, "pk1", "1.2.3.4", 2, 0, a);
   assert.equal(stmts.getCredits.get("pk1").amount, 8);
   assert.equal(stmts.listReservations.all().length, 0);
+});
+
+test("익명 IP 가명화: 90일 지난 행은 HMAC 으로 바뀌고 평생 무료 한도는 그대로 센다", () => {
+  const { db, stmts } = freshDb();
+  const secret = "s3cret";
+  const count = (ip) => stmts.countByIp.get(ip, ipTag(secret, ip)).cnt;
+  db.prepare("INSERT INTO usage (pubkey, ip, created_at) VALUES (NULL, '1.2.3.4', unixepoch() - 86400 * 100)").run();
+  db.prepare("INSERT INTO usage (pubkey, ip, created_at) VALUES (NULL, '1.2.3.4', unixepoch() - 86400 * 95)").run();
+  stmts.recordUsage.run(null, "1.2.3.4"); // 오늘 것
+  db.prepare("INSERT INTO usage (pubkey, ip, created_at) VALUES ('pk', '1.2.3.4', unixepoch() - 86400 * 100)").run();
+  assert.equal(count("1.2.3.4"), 3);
+  assert.equal(pseudonymizeOldAnonIps(stmts, secret), 2);
+  const ips = db.prepare("SELECT ip FROM usage WHERE pubkey IS NULL ORDER BY id").all().map((r) => r.ip);
+  assert.deepEqual(ips, [ipTag(secret, "1.2.3.4"), ipTag(secret, "1.2.3.4"), "1.2.3.4"]);
+  assert.match(ips[0], /^h:[0-9a-f]{32}$/);
+  assert.equal(count("1.2.3.4"), 3, "가명으로 바뀐 뒤에도 같은 IP 로 센다");
+  assert.equal(count("5.6.7.8"), 0);
+  assert.equal(pseudonymizeOldAnonIps(stmts, secret), 0, "두 번 돌려도 다시 바꾸지 않는다");
+  // 비밀값이 없으면 가명화하지 않고 원본으로만 센다
+  assert.equal(ipTag("", "1.2.3.4"), "1.2.3.4");
+  assert.equal(pseudonymizeOldAnonIps(stmts, ""), 0);
 });

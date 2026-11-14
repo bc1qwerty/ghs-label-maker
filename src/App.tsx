@@ -41,11 +41,9 @@ function App() {
 
   React.useEffect(() => {
     const root = document.documentElement;
-    if (isDark) {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
-    }
+    // .light 도 붙인다 — index.html 의 상단 띠가 OS 다크 규칙을 이것으로 끈다.
+    root.classList.toggle("dark", isDark);
+    root.classList.toggle("light", !isDark);
   }, [isDark]);
 
   const toggleTheme = () => {

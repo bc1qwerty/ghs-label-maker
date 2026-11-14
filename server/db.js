@@ -1,6 +1,7 @@
 // SQLite schema + prepared statements, extracted from index.js so tests can
 // run against an in-memory database with the exact production statements.
 import Database from "better-sqlite3";
+import { createHmac } from "node:crypto";
 
 export function createDb(dbPath) {
   const db = new Database(dbPath);
@@ -50,7 +51,10 @@ export function createDb(dbPath) {
 
   const stmts = {
     countByPubkey: db.prepare("SELECT COUNT(*) as cnt FROM usage WHERE pubkey = ?"),
-    countByIp: db.prepare("SELECT COUNT(*) as cnt FROM usage WHERE ip = ? AND pubkey IS NULL"),
+    // 익명 한도는 원본 IP 와 그 가명(ipTag) 둘 다로 센다 — 90일 지난 행은 가명만 남는다.
+    countByIp: db.prepare("SELECT COUNT(*) as cnt FROM usage WHERE ip IN (?, ?) AND pubkey IS NULL"),
+    oldAnonIps: db.prepare("SELECT DISTINCT ip FROM usage WHERE pubkey IS NULL AND ip IS NOT NULL AND ip NOT LIKE 'h:%' AND created_at < unixepoch() - 86400 * 90"),
+    tagOldAnonIp: db.prepare("UPDATE usage SET ip = ? WHERE pubkey IS NULL AND ip = ? AND created_at < unixepoch() - 86400 * 90"),
     recordUsage: db.prepare("INSERT INTO usage (pubkey, ip) VALUES (?, ?)"),
     getCredits: db.prepare("SELECT * FROM credits WHERE pubkey = ?"),
     upsertCredits: db.prepare(`
@@ -88,8 +92,26 @@ export function createDb(dbPath) {
     getHistory: db.prepare("SELECT id, mode, filename, created_at FROM history WHERE pubkey = ? ORDER BY created_at DESC LIMIT 100"),
     getHistoryItem: db.prepare("SELECT * FROM history WHERE id = ? AND pubkey = ?"),
     deleteHistoryItem: db.prepare("DELETE FROM history WHERE id = ? AND pubkey = ?"),
+    // 처리방침의 «IP 는 최대 90일». 로그인 사용량은 pubkey 로 세므로 IP 를 지워도 한도 계산이 그대로다.
+    // 익명 행의 IP 는 평생 무료 3건의 키라 지우지 않고, 90일 뒤 서버 비밀값으로 만든 가명으로 바꾼다(pseudonymizeOldAnonIps).
+    forgetOldUsageIps: db.prepare("UPDATE usage SET ip = NULL WHERE pubkey IS NOT NULL AND ip IS NOT NULL AND created_at < unixepoch() - 86400 * 90"),
     deleteOldHistory: db.prepare("DELETE FROM history WHERE created_at < unixepoch() - 86400 * 30"),
   };
 
   return { db, stmts };
+}
+
+// 익명 사용량의 IP 가명. 서버 비밀값으로 만든 HMAC 이라 DB 만으로는 원래 IP 를 되짚을 수 없다.
+// 비밀값이 없으면(개발 환경) 원본을 그대로 돌려준다 — 한도 계산은 같고 가명화만 안 된다.
+export function ipTag(secret, ip) {
+  if (!secret || !ip) return ip;
+  return "h:" + createHmac("sha256", secret).update(String(ip)).digest("hex").slice(0, 32);
+}
+
+// 90일 지난 익명 행의 원본 IP 를 가명으로 바꾼다. 평생 무료 한도는 countByIp 가 둘 다 세므로 그대로다.
+export function pseudonymizeOldAnonIps(stmts, secret) {
+  if (!secret) return 0;
+  let n = 0;
+  for (const { ip } of stmts.oldAnonIps.all()) n += stmts.tagOldAnonIp.run(ipTag(secret, ip), ip).changes;
+  return n;
 }

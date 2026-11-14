@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pictogramsFromH, sortStatements, normalizePhone, mergeContinuations, normalizeGhsData, DANGER_H } from "../server/ghs-normalize.js";
+import { pictogramsFromH, sortStatements, normalizePhone, mergeContinuations, normalizeGhsData, DANGER_H, pdfBytes, shapeDocument } from "../server/ghs-normalize.js";
 
 // MSDS 목록에서 경고표지를 만들며(2026-11-05) 찾은 것들을 AI 추출 경로에도 고정한다.
 
@@ -141,4 +141,27 @@ test("H 코드를 하나도 못 읽었어도 해골이 있으면 느낌표는 �
     pictograms: [{ code: "GHS07", name: "b" }], hazardStatements: [], precautionaryStatements: [], emergencyPhone: "",
   }, {});
   assert.deepEqual(kept.pictograms.map((p) => p.code), ["GHS07"]);
+});
+
+test("pdfBytes: 풀 조각 버퍼를 자기 바이트만 가진 사본으로 만든다(pdf.js 가 byteOffset 을 무시한다)", () => {
+  const pooled = Buffer.from("%PDF-small"); // 작은 Buffer.from 은 공용 풀 조각이다
+  const out = pdfBytes(pooled);
+  assert.equal(out.constructor, Uint8Array);
+  assert.equal(out.byteOffset, 0);
+  assert.equal(out.buffer.byteLength, pooled.length);
+  assert.equal(Buffer.from(out).toString(), "%PDF-small");
+});
+
+test("shapeDocument: 화면이 죽는 모양은 실패로, 섹션은 문자열로 맞춘다", () => {
+  assert.equal(shapeDocument(null), null);
+  assert.equal(shapeDocument([{ productName: "x" }]), null);
+  assert.equal(shapeDocument({}), null);
+  assert.equal(shapeDocument({ productName: { a: 1 } }), null);
+  assert.equal(shapeDocument({ productName: "x", sections: null }), null);
+  assert.equal(shapeDocument({ productName: "x", sections: ["a"] }), null);
+  assert.deepEqual(shapeDocument({ productName: 7, unNumber: "UN1" }), { productName: "7", unNumber: "UN1" });
+  assert.deepEqual(
+    shapeDocument({ productName: "x", sections: { 1: null, 2: "text", 3: { title: 5, content: ["a"] } } }).sections,
+    { 1: { title: "", content: "" }, 2: { title: "", content: "text" }, 3: { title: "5", content: '["a"]' } },
+  );
 });

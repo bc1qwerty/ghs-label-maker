@@ -28,6 +28,8 @@ export function PaymentModal({ pubkey, fileCount, onClose, onPaid }: PaymentModa
   const [copied, setCopied] = React.useState(false);
   const [invoiceLabel, setInvoiceLabel] = React.useState("");
   const [invoiceAmount, setInvoiceAmount] = React.useState(0);
+  // 인보이스는 1시간짜리다. 지나면 폴링을 멈추고 새로 만들라고 안내한다(전에는 «Waiting…» 그대로였다).
+  const [expired, setExpired] = React.useState(false);
   const [batchPrice, setBatchPrice] = React.useState<{ perFile: number; total: number; discount: number } | null>(null);
   const pollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
   const panelRef = React.useRef<HTMLDivElement>(null);
@@ -53,6 +55,10 @@ export function PaymentModal({ pubkey, fileCount, onClose, onPaid }: PaymentModa
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [fileCount]);
+
+  // 인보이스 응답 전에 창을 닫으면, 늦게 온 응답이 만든 폴링을 지울 주체가 없다.
+  const closedRef = React.useRef(false);
+  React.useEffect(() => { closedRef.current = false; return () => { closedRef.current = true; }; }, []);
 
   React.useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
@@ -106,6 +112,7 @@ export function PaymentModal({ pubkey, fileCount, onClose, onPaid }: PaymentModa
         return;
       }
       const data = await res.json() as { paymentRequest: string; paymentHash: string; amount: number };
+      if (closedRef.current) return;
       setInvoice(data.paymentRequest);
       setInvoiceLabel(label);
       setInvoiceAmount(data.amount);
@@ -115,8 +122,11 @@ export function PaymentModal({ pubkey, fileCount, onClose, onPaid }: PaymentModa
         color: { dark: "#000000", light: "#ffffff" },
       });
       setQrDataUrl(qr);
+      if (closedRef.current) return;
       setStep("invoice");
       setChecking(false);
+      setExpired(false);
+      const createdAt = Date.now();
 
       if (isMobile) window.open(`lightning:${data.paymentRequest}`, "_blank");
 
@@ -128,6 +138,9 @@ export function PaymentModal({ pubkey, fileCount, onClose, onPaid }: PaymentModa
             if (pollRef.current) clearInterval(pollRef.current);
             setCredits(checkData.credits || 0);
             setStep("paid");
+          } else if (Date.now() - createdAt > 55 * 60_000) {
+            if (pollRef.current) clearInterval(pollRef.current);
+            setExpired(true);
           }
         } catch {}
       }, 3000);
@@ -285,9 +298,15 @@ export function PaymentModal({ pubkey, fileCount, onClose, onPaid }: PaymentModa
               </details>
             )}
 
-            <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Waiting for payment...
-            </div>
+            {expired ? (
+              <p className="text-sm text-destructive text-center" role="alert" data-testid="invoice-expired">
+                This invoice has expired. Go back and create a new one — do not pay this one.
+              </p>
+            ) : (
+              <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Waiting for payment...
+              </div>
+            )}
 
             <button onClick={() => { if (pollRef.current) clearInterval(pollRef.current); setStep("select"); }} className="text-xs text-muted-foreground hover:underline w-full text-center">
               ← Back

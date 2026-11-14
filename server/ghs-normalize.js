@@ -142,3 +142,29 @@ export function normalizeGhsData(data, names, { danger } = {}) {
     emergencyPhone: normalizePhone(data.emergencyPhone),
   };
 }
+
+// pdf-parse 의 pdf.js(v1.10.100) 는 스트림을 `bytes.buffer` 로 만들며 byteOffset 을 무시한다. multer 의 작은
+// 버퍼는 Node 의 공용 풀(poolSize) 조각이라, 그대로 넘기면 풀 맨 앞의 남의 바이트(다른 업로드일 수 있다)를
+// 읽는다. 자기 바이트만 가진 사본을 넘긴다. ⚠ Buffer 로 만든 사본(slice·Buffer.from)은 다시 풀에 놓일 수
+// 있고 pdf.js 가 Buffer 를 따로 다뤄 그대로 틀린다 — 순수 Uint8Array 여야 한다(실측).
+export function pdfBytes(buffer) {
+  return new Uint8Array(buffer);
+}
+
+// DGD·SDS·UN38.3 결과는 화면이 그대로 그린다. 모양이 어긋난 응답(배열, 제품명 없음, 섹션이 null)을
+// 성공으로 과금·저장하면 그 기록을 열 때마다 화면이 죽는다 — 여기서 모양을 맞추거나 실패로 돌린다.
+export function shapeDocument(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const name = data.productName;
+  if (name == null || typeof name === "object" || !String(name).trim()) return null;
+  const out = { ...data, productName: String(name) };
+  if ("sections" in data) {
+    if (!data.sections || typeof data.sections !== "object" || Array.isArray(data.sections)) return null;
+    out.sections = Object.fromEntries(Object.entries(data.sections).map(([num, sec]) => {
+      const o = sec && typeof sec === "object" && !Array.isArray(sec) ? sec : { content: sec };
+      const text = (v) => (v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
+      return [num, { title: text(o.title), content: text(o.content) }];
+    }));
+  }
+  return out;
+}

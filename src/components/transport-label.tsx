@@ -57,6 +57,21 @@ function ClassMark({ hazardClass, size }: { hazardClass: string; size: number })
   );
 }
 
+// 운송 서류는 영어가 기준이라 영어를 지우지 않는다. 한국어 라벨에서는 국내 운송 규정의 용어를 앞에 병기한다.
+// (ADR/영국 고유 항목인 Transport Category·Tunnel Code·Emergency Action 은 국내 대응 용어가 없어 영어만 둔다.)
+const KO: Record<string, string> = {
+  "UN Number": "유엔번호",
+  "Hazard Class": "급(등급)",
+  "Subsidiary Risks": "부위험성",
+  "Packing Group": "포장등급",
+  "Special Provisions": "특별규정",
+  "Marine Pollutant": "해양오염물질",
+  "NOT REGULATED FOR TRANSPORT": "운송 규제 대상 아님",
+};
+function label(en: string, language: string): string {
+  return language === "ko" && KO[en] ? `${KO[en]} (${en})` : en;
+}
+
 export function TransportLabel({ data }: { data: TransportData }) {
   if (data.notRegulated) {
     return (
@@ -68,7 +83,7 @@ export function TransportLabel({ data }: { data: TransportData }) {
         <div style={{ padding: "32px 24px", textAlign: "center" }}>
           <h1 style={{ fontSize: 28, fontWeight: 900, margin: "0 0 16px" }}>{data.productName}</h1>
           <div style={{ fontSize: 20, fontWeight: 700, color: "#16a34a", padding: "16px", border: "3px solid #16a34a", borderRadius: 8, display: "inline-block" }}>
-            NOT REGULATED FOR TRANSPORT
+            {label("NOT REGULATED FOR TRANSPORT", data.language)}
           </div>
           <p style={{ fontSize: 14, color: "#666", marginTop: 16 }}>
             This substance is not classified as dangerous goods for transport under UN regulations.
@@ -97,7 +112,7 @@ export function TransportLabel({ data }: { data: TransportData }) {
           </div>
           <div style={{ textAlign: "right", minWidth: 160 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-              UN Number
+              {label("UN Number", data.language)}
             </div>
             <div style={{ fontSize: 36, fontWeight: 900, color: "#cc0000", letterSpacing: "0.05em" }}>
               {data.unNumber}
@@ -122,7 +137,7 @@ export function TransportLabel({ data }: { data: TransportData }) {
           )}
           {data.marinePollutant && (
             <div style={{ fontSize: 11, fontWeight: 700, color: "#fff", backgroundColor: "#0369a1", padding: "4px 10px", borderRadius: 4, textTransform: "uppercase" }}>
-              Marine Pollutant
+              {label("Marine Pollutant", data.language)}
             </div>
           )}
         </div>
@@ -131,16 +146,16 @@ export function TransportLabel({ data }: { data: TransportData }) {
         <div style={{ flex: 1, padding: "20px 24px" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
             <tbody>
-              <Row label="Hazard Class" value={data.hazardClass} />
+              <Row label={label("Hazard Class", data.language)} value={data.hazardClass} />
               {data.subsidiaryRisks.length > 0 && (
-                <Row label="Subsidiary Risks" value={data.subsidiaryRisks.join(", ")} />
+                <Row label={label("Subsidiary Risks", data.language)} value={data.subsidiaryRisks.join(", ")} />
               )}
-              <Row label="Packing Group" value={data.packingGroup || "N/A"} />
+              <Row label={label("Packing Group", data.language)} value={data.packingGroup || "N/A"} />
               {data.transportCategory && <Row label="Transport Category" value={data.transportCategory} />}
               {data.tunnelRestrictionCode && <Row label="Tunnel Code" value={data.tunnelRestrictionCode} />}
               {data.emergencyAction && <Row label="Emergency Action" value={data.emergencyAction} />}
               {data.specialProvisions.length > 0 && (
-                <Row label="Special Provisions" value={data.specialProvisions.join(", ")} />
+                <Row label={label("Special Provisions", data.language)} value={data.specialProvisions.join(", ")} />
               )}
             </tbody>
           </table>
