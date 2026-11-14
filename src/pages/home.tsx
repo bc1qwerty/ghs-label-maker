@@ -201,8 +201,9 @@ export default function Home() {
 
       if (response.status === 402) {
         const err = await response.json().catch(() => ({})) as { needsLogin?: boolean; message?: string; credits?: number };
-        if (err.needsLogin && !userPubkey) {
-          requestLogin("Free trial exhausted. Please login and purchase credits.");
+        if (err.needsLogin) {
+          // SDK 는 로그인 상태인데 서버 세션만 만료된 경우에도 needsLogin 이 온다 — 결제창이 아니라 로그인 창.
+          requestLogin(userPubkey ? "Your session expired. Please login again." : "Free trial exhausted. Please login and purchase credits.");
         } else {
           // 크레딧이 남았는데 파일 수가 더 많은 경우는 서버가 그 사실을 문구로 준다.
           setApiError(err.credits && err.message ? err.message : "Free trial exhausted. Please purchase credits.");
@@ -324,6 +325,38 @@ export default function Home() {
 
   const successCount = results.filter((r) => r.status === "success").length;
   const errorCount = results.filter((r) => r.status === "error").length;
+
+  // 오른쪽 열(xl)과 그보다 좁은 화면의 가운데 열 아래, 두 자리에서 쓴다.
+  const historyList = userPubkey && history.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="font-semibold text-sm">Recent Labels</p>
+                    <div className="rounded-lg border bg-card max-h-64 overflow-y-auto">
+                      {history.slice(0, 20).map((item) => (
+                        <button
+                          key={item.id}
+                          onClick={() => loadHistoryItem(item.id)}
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-muted/50 border-b last:border-b-0 transition-colors"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate font-medium">{item.filename}</span>
+                            <span className={`flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded ${{
+                              ghs: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
+                              transport: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
+                              dgd: "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300",
+                              "sds-convert": "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300",
+                              un383: "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300",
+                            }[item.mode] || "bg-gray-100 text-gray-700"}`}>
+                              {{ ghs:"GHS", transport:"TR", dgd:"DGD", "sds-convert":"SDS", un383:"38.3" }[item.mode] || item.mode}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
+                            {new Date(item.created_at * 1000).toLocaleDateString()}
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+  ) : null;
 
   return (
     <div className="min-h-[100dvh] w-full bg-background grid grid-rows-[1fr_auto]">
@@ -600,6 +633,8 @@ export default function Home() {
               </div>
             )}
 
+            {historyList && <div className="xl:hidden print:hidden">{historyList}</div>}
+
               </div>{/* end center column */}
 
               {/* Right column: Account & History (xl only, lg shows inline) */}
@@ -661,36 +696,7 @@ export default function Home() {
                   </div>
                 )}
 
-                {userPubkey && history.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="font-semibold text-sm">Recent Labels</p>
-                    <div className="rounded-lg border bg-card max-h-64 overflow-y-auto">
-                      {history.slice(0, 20).map((item) => (
-                        <button
-                          key={item.id}
-                          onClick={() => loadHistoryItem(item.id)}
-                          className="w-full text-left px-3 py-2 text-xs hover:bg-muted/50 border-b last:border-b-0 transition-colors"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="truncate font-medium">{item.filename}</span>
-                            <span className={`flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded ${{
-                              ghs: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
-                              transport: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
-                              dgd: "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300",
-                              "sds-convert": "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300",
-                              un383: "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300",
-                            }[item.mode] || "bg-gray-100 text-gray-700"}`}>
-                              {{ ghs:"GHS", transport:"TR", dgd:"DGD", "sds-convert":"SDS", un383:"38.3" }[item.mode] || item.mode}
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">
-                            {new Date(item.created_at * 1000).toLocaleDateString()}
-                          </p>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {historyList}
               </aside>
 
             </div>{/* end 3-col grid */}

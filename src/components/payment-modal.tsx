@@ -56,7 +56,11 @@ export function PaymentModal({ pubkey, fileCount, onClose, onPaid }: PaymentModa
 
   React.useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
-    return () => { opener?.focus(); };
+    // 처리 중 비활성화된 단추는 포커스를 잃어 opener 가 body 로 잡힌다 — 그때는 생성 단추로 돌려준다.
+    return () => {
+      const back = opener && opener !== document.body ? opener : document.querySelector<HTMLElement>('[data-testid="button-generate"]');
+      back?.focus();
+    };
   }, []);
 
   // «paid» 단계는 어느 경로로 닫든(X·오버레이·Escape·Done) 홈이 크레딧을 다시

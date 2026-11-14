@@ -25,7 +25,8 @@ app.disable("x-powered-by");
 const PORT = process.env.PORT || 3100;
 
 // ─── Database ───
-const { db, stmts } = createDb(path.join(__dirname, "ghs.db"));
+// GHS_DB_PATH 는 통합 테스트가 임시 DB 로 서버를 띄울 때만 쓴다.
+const { db, stmts } = createDb(process.env.GHS_DB_PATH || path.join(__dirname, "ghs.db"));
 {
   const refunded = refundStaleReservations(db, stmts);
   if (refunded) console.log(`[GHS] 앞 프로세스가 정산하지 못한 예약 ${refunded}건을 환급했다`);
