@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pictogramsFromH, sortStatements, normalizePhone, mergeContinuations, normalizeGhsData, DANGER_H, pdfBytes, shapeDocument } from "../server/ghs-normalize.js";
+import { pictogramsFromH, sortStatements, normalizePhone, mergeContinuations, normalizeGhsData, DANGER_H, pdfBytes, shapeDocument, isDangerWord } from "../server/ghs-normalize.js";
 
 // MSDS 목록에서 경고표지를 만들며(2026-11-05) 찾은 것들을 AI 추출 경로에도 고정한다.
 
@@ -164,4 +164,14 @@ test("shapeDocument: 화면이 죽는 모양은 실패로, 섹션은 문자열�
     shapeDocument({ productName: "x", sections: { 1: null, 2: "text", 3: { title: 5, content: ["a"] } } }).sections,
     { 1: { title: "", content: "" }, 2: { title: "", content: "text" }, 3: { title: "5", content: '["a"]' } },
   );
+});
+
+test("신호어: 덧붙은 값도 «위험» 으로 읽는다(완전 일치만 보면 «경고» 로 내려갔다)", () => {
+  const D = ["Danger", "위험", "危険", "危险", "Gefahr", "Peligro", "Perigo", "อันตราย", "Nguy hiểm"];
+  for (const v of ["위험", "위험(Danger)", "Danger!", "DANGER / 경고", "危険（Danger）", "Peligro.", "nguy hiểm", " gefahr "]) {
+    assert.equal(isDangerWord(v, D), true, v);
+  }
+  for (const v of ["경고", "Warning", "Achtung", "endangered", "", null, undefined]) {
+    assert.equal(isDangerWord(v, D), false, String(v));
+  }
 });

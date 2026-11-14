@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createDb, ipTag, pseudonymizeOldAnonIps } from "../server/db.js";
+import { createDb, countAnonByIp, ipTag, loadIpSecret, pseudonymizeOldAnonIps } from "../server/db.js";
 import { PLANS, calcBatchPrice, settlePayment, reconcilePendingPayments, recordUsage, reserveCredits, reserve, settlePaidUsage } from "../server/payments.js";
 
 // Payment/credit core paths against an in-memory DB with the exact
@@ -498,7 +498,7 @@ test("settlePaidUsage: 예약 id 로 정산하면 같은 크기의 다른 예약
 test("익명 IP 가명화: 90일 지난 행은 HMAC 으로 바뀌고 평생 무료 한도는 그대로 센다", () => {
   const { db, stmts } = freshDb();
   const secret = "s3cret";
-  const count = (ip) => stmts.countByIp.get(ip, ipTag(secret, ip)).cnt;
+  const count = (ip) => countAnonByIp(stmts, [secret], ip);
   db.prepare("INSERT INTO usage (pubkey, ip, created_at) VALUES (NULL, '1.2.3.4', unixepoch() - 86400 * 100)").run();
   db.prepare("INSERT INTO usage (pubkey, ip, created_at) VALUES (NULL, '1.2.3.4', unixepoch() - 86400 * 95)").run();
   stmts.recordUsage.run(null, "1.2.3.4"); // 오늘 것
@@ -514,4 +514,33 @@ test("익명 IP 가명화: 90일 지난 행은 HMAC 으로 바뀌고 평생 무�
   // 비밀값이 없으면 가명화하지 않고 원본으로만 센다
   assert.equal(ipTag("", "1.2.3.4"), "1.2.3.4");
   assert.equal(pseudonymizeOldAnonIps(stmts, ""), 0);
+});
+
+test("IP 가명 비밀값: 파일에 한 번 만들어 다시 읽고, 옛 비밀값으로 가명화된 행도 같이 센다", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const os = await import("node:os");
+  const { randomBytes } = await import("node:crypto");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ghs-ipsecret-"));
+  try {
+    const deps = { fs, path, randomBytes };
+    const dbPath = path.join(dir, "ghs.db");
+    assert.equal(loadIpSecret(dbPath, "from-env", deps), "from-env", "env 가 있으면 그것");
+    const made = loadIpSecret(dbPath, "", deps);
+    assert.match(made, /^[0-9a-f]{64}$/);
+    assert.equal(loadIpSecret(dbPath, "", deps), made, "두 번째 기동은 같은 값");
+    assert.equal(fs.statSync(path.join(dir, ".ghs-ip-secret")).mode & 0o777, 0o600);
+    assert.equal(loadIpSecret(":memory:", "", deps), "", "메모리 DB 는 가명화하지 않는다");
+
+    const { db, stmts } = freshDb();
+    const legacy = "ghs-usage-ip:old-password";
+    db.prepare("INSERT INTO usage (pubkey, ip) VALUES (NULL, ?)").run(ipTag(legacy, "1.2.3.4")); // 옛 비밀값의 가명
+    db.prepare("INSERT INTO usage (pubkey, ip) VALUES (NULL, ?)").run(ipTag(made, "1.2.3.4"));   // 지금 비밀값의 가명
+    stmts.recordUsage.run(null, "1.2.3.4");                                                      // 원본
+    assert.equal(countAnonByIp(stmts, [made, legacy], "1.2.3.4"), 3);
+    assert.equal(countAnonByIp(stmts, [made, ""], "1.2.3.4"), 2, "옛 값을 모르면 그 행은 못 센다");
+    assert.equal(countAnonByIp(stmts, [made, legacy], "5.6.7.8"), 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

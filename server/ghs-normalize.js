@@ -168,3 +168,23 @@ export function shapeDocument(data) {
   }
   return out;
 }
+
+/**
+ * AI 가 낸 신호어가 «위험» 쪽인가. 완전 일치만 보면 «위험(Danger)»·«Danger!»·«DANGER / 위험» 처럼 덧붙은 값이
+ * «경고» 로 내려간다 — 낮춰 표시하는 쪽이 위험하므로, 어느 언어든 «위험» 낱말이 들어 있으면 위험으로 읽는다.
+ * 라틴 문자 낱말은 낱말 경계로(예: "endangered" 는 아님), 그 밖의 문자는 포함 여부로 본다.
+ * @param {unknown} raw
+ * @param {string[]} dangerWords  지원 언어들의 «위험»
+ */
+export function isDangerWord(raw, dangerWords) {
+  const text = String(raw ?? "").normalize("NFC").toLowerCase();
+  if (!text.trim()) return false;
+  return dangerWords.some((w) => {
+    const word = String(w).normalize("NFC").toLowerCase();
+    if (!word) return false;
+    if (/^[a-z\u00c0-\u024f ]+$/.test(word)) {
+      return new RegExp(`(^|[^a-z\\u00c0-\\u024f])${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z\\u00c0-\\u024f])`).test(text);
+    }
+    return text.includes(word);
+  });
+}

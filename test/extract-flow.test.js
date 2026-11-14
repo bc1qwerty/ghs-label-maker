@@ -37,12 +37,18 @@ test("추출 흐름: 작은 PDF·무료 한도 경합·운송 불리언·문서 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ghs-flow-"));
   const auth = new Database(path.join(tmp, "auth.db"));
   auth.exec("CREATE TABLE users(id INTEGER PRIMARY KEY, pubkey TEXT); CREATE TABLE sessions(token TEXT PRIMARY KEY, user_id INTEGER, expires_at INTEGER);"
-    + "INSERT INTO users VALUES(1,'pkbuyer'); INSERT INTO sessions VALUES('tokbuyer',1,unixepoch()+9999);");
+    + "INSERT INTO users VALUES(1,'pkbuyer'); INSERT INTO sessions VALUES('tokbuyer',1,unixepoch()+9999);"
+    + ["mix", "nocred", "part", "short", "full"].map((n, i) => `INSERT INTO users VALUES(${i + 2},'pk${n}'); INSERT INTO sessions VALUES('tok${n}',${i + 2},unixepoch()+9999);`).join(""));
   auth.close();
   // 크레딧을 먼저 산 새 계정 — 무료 3건을 아직 안 썼다.
   {
     const { db: seed } = (await import("../server/db.js")).createDb(path.join(tmp, "ghs.db"));
     seed.prepare("INSERT INTO credits (pubkey, amount, plan, plan_expires_at) VALUES ('pkbuyer', 5, 'credits', 0)").run();
+    // 묶음 정산용 계정들: mix·nocred 는 무료 2건을 이미 썼다.
+    for (const [pk, amount] of [["pkmix", 5], ["pkpart", 5], ["pkshort", 1], ["pkfull", 5]]) {
+      seed.prepare("INSERT INTO credits (pubkey, amount, plan, plan_expires_at) VALUES (?, ?, 'credits', 0)").run(pk, amount);
+    }
+    for (const pk of ["pkmix", "pkmix", "pknocred", "pknocred"]) seed.prepare("INSERT INTO usage (pubkey, ip) VALUES (?, '10.9.9.9')").run(pk);
     seed.close();
   }
 
@@ -58,6 +64,8 @@ test("추출 흐름: 작은 PDF·무료 한도 경합·운송 불리언·문서 
         out = mark === "MARK-empty" ? {} : { productName: mark, unNumber: "UN1230", hazardClass: "3", notRegulated: "false", marinePollutant: "false" };
       } else if (prompt.includes("16-section")) {
         out = mark === "MARK-array" ? [1, 2] : { productName: mark, sections: { 1: null, 2: { title: 3, content: ["x"] } } };
+      } else if (mark.startsWith("MARK-bad")) {
+        out = {}; // 불완전한 응답 → 그 파일은 실패
       } else {
         out = { productName: mark, supplier: "s", signalWord: "DANGER", pictograms: [null, { code: "GHS02" }], hazardStatements: ["H225 x"], precautionaryStatements: [] };
       }
@@ -126,6 +134,53 @@ test("추출 흐름: 작은 PDF·무료 한도 경합·운송 불리언·문서 
   assert.equal(credits(), 5, "무료 3건 동안 크레딧은 줄지 않는다");
   assert.equal(await asBuyer("p1"), 200);
   assert.equal(credits(), 4, "네 번째부터 크레딧을 쓴다");
+
+  // 묶음: 남은 무료분을 먼저 쓰고 나머지만 크레딧으로 낸다(통째로 유료 처리하면 무료분이 사라졌다).
+  const batchAs = async (who, marks) => {
+    const fd = new FormData();
+    fd.append("language", "en");
+    for (const m of marks) fd.append("files", new Blob([tinyPdf(`MARK-${m} ${filler}`)], { type: "application/pdf" }), `${m}.pdf`);
+    const r = await fetch(`http://127.0.0.1:${port}/api/ghs/extract-batch`, { method: "POST", body: fd, headers: { "x-forwarded-for": "10.6.0.1", origin: ORIGIN, cookie: `txid_session=tok${who}` } });
+    return { status: r.status, body: await r.json().catch(() => null) };
+  };
+  const state = (who) => {
+    const d = new Database(path.join(tmp, "ghs.db"), { readonly: true });
+    try {
+      return {
+        credits: d.prepare("SELECT amount FROM credits WHERE pubkey = ?").get(`pk${who}`)?.amount ?? 0,
+        used: d.prepare("SELECT COUNT(*) AS n FROM usage WHERE pubkey = ?").get(`pk${who}`).n,
+        reserved: d.prepare("SELECT COUNT(*) AS n FROM reservations WHERE pubkey = ?").get(`pk${who}`).n,
+      };
+    } finally { d.close(); }
+  };
+  // 무료 1건 남음 + 크레딧 5, 2개 묶음 → 무료 1 + 유료 1
+  assert.equal((await batchAs("mix", ["m1", "m2"])).status, 200);
+  assert.deepEqual(state("mix"), { credits: 4, used: 4, reserved: 0 });
+  // 무료분을 다 쓴 뒤의 2개 묶음 → 유료 2
+  assert.equal((await batchAs("mix", ["m3", "m4"])).status, 200);
+  assert.deepEqual(state("mix"), { credits: 2, used: 6, reserved: 0 });
+  // 무료 1건 남음 + 크레딧 없음, 2개 묶음 → 402 이고 «소진» 이 아니라 남은 것을 알린다. 1개는 통과한다.
+  const noCred = await batchAs("nocred", ["n1", "n2"]);
+  assert.equal(noCred.status, 402);
+  assert.match(noCred.body.message, /1 free extraction\(s\) left/);
+  assert.equal(noCred.body.freeRemaining, 1);
+  assert.deepEqual(state("nocred"), { credits: 0, used: 2, reserved: 0 });
+  assert.equal((await batchAs("nocred", ["n3"])).status, 200);
+  assert.equal(state("nocred").used, 3);
+  // 새 계정 + 크레딧 5, 5개 묶음 중 2개 실패 → 성공 3건은 무료분이 메우고 예약한 2크레딧은 전액 환급
+  assert.equal((await batchAs("part", ["q1", "bad1", "q2", "bad2", "q3"])).status, 200);
+  assert.deepEqual(state("part"), { credits: 5, used: 3, reserved: 0 });
+  // 새 계정 + 크레딧 1, 5개 묶음 → 무료 3 + 크레딧 1 로는 모자라 402, 아무것도 차감·기록하지 않는다
+  const short = await batchAs("short", ["h1", "h2", "h3", "h4", "h5"]);
+  assert.equal(short.status, 402);
+  assert.match(short.body.message, /3 free extraction\(s\) and 1 credit\(s\) left/);
+  assert.deepEqual(state("short"), { credits: 1, used: 0, reserved: 0 });
+  // 새 계정 + 크레딧 5, 5개 묶음 전부 성공 → 무료 3 + 유료 2
+  assert.equal((await batchAs("full", ["u1", "u2", "u3", "u4", "u5"])).status, 200);
+  assert.deepEqual(state("full"), { credits: 3, used: 5, reserved: 0 });
+  // 전부 실패 → 차감 0
+  assert.equal((await batchAs("full", ["bad3", "bad4"])).status, 200);
+  assert.deepEqual(state("full"), { credits: 3, used: 5, reserved: 0 });
 
   // 운송: "false" 문자열은 거짓이다. 빈 응답은 실패다.
   const tr = await send("/api/transport/extract", "file", ["t1"], "10.3.0.1");

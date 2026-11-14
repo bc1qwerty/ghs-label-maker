@@ -6,11 +6,12 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
-import { createDb, ipTag, pseudonymizeOldAnonIps } from "./db.js";
+import { randomBytes } from "node:crypto";
+import { createDb, countAnonByIp, loadIpSecret, pseudonymizeOldAnonIps } from "./db.js";
 import { PLANS, isValidBatchCount, trackUsage, calcBatchPrice, settlePayment, reconcilePendingPayments, recordUsage as recordUsageImpl, reserve as reserveImpl, settlePaidUsage as settlePaidUsageImpl, refundStaleReservations } from "./payments.js";
 import { complete, extractJson, llmStats } from "./llm.js";
 import { getClientIp, crossOriginGuard } from "./client-ip.js";
-import { normalizeGhsData, pdfBytes, shapeDocument } from "./ghs-normalize.js";
+import { isDangerWord, normalizeGhsData, pdfBytes, shapeDocument } from "./ghs-normalize.js";
 
 // Load .env from the working directory (node 22+ builtin). The VPS pm2
 // process used to depend on env vars captured at first `pm2 start` — a
@@ -26,7 +27,8 @@ const PORT = process.env.PORT || 3100;
 
 // ─── Database ───
 // GHS_DB_PATH 는 통합 테스트가 임시 DB 로 서버를 띄울 때만 쓴다.
-const { db, stmts } = createDb(process.env.GHS_DB_PATH || path.join(__dirname, "ghs.db"));
+const GHS_DB_PATH = process.env.GHS_DB_PATH || path.join(__dirname, "ghs.db");
+const { db, stmts } = createDb(GHS_DB_PATH);
 {
   const refunded = refundStaleReservations(db, stmts);
   if (refunded) console.log(`[GHS] 앞 프로세스가 정산하지 못한 예약 ${refunded}건을 환급했다`);
@@ -38,8 +40,10 @@ const { db, stmts } = createDb(process.env.GHS_DB_PATH || path.join(__dirname, "
 const FREE_LIMIT = 3;
 const PHOENIXD_URL = process.env.PHOENIXD_URL || "http://127.0.0.1:9740";
 const PHOENIXD_PASSWORD = process.env.PHOENIXD_PASSWORD || "";
-// 익명 사용량의 IP 가명에 쓰는 비밀값. 따로 둘 env 가 없어 기존 서버 비밀값에서 파생한다(DB 에는 없다).
-const IP_SECRET = PHOENIXD_PASSWORD ? `ghs-usage-ip:${PHOENIXD_PASSWORD}` : "";
+// 익명 사용량의 IP 가명에 쓰는 비밀값(GHS_IP_SECRET, 없으면 DB 옆 .ghs-ip-secret 파일). 결제 비밀번호와 독립이다.
+// 예전엔 PHOENIXD_PASSWORD 에서 파생했다 — 그때 가명화된 행이 있을 수 있어 옛 값도 대조에 넣는다.
+const IP_SECRET = loadIpSecret(GHS_DB_PATH, process.env.GHS_IP_SECRET || "", { fs, path, randomBytes });
+const IP_SECRETS = [IP_SECRET, PHOENIXD_PASSWORD ? `ghs-usage-ip:${PHOENIXD_PASSWORD}` : ""];
 
 // PLANS / calcBatchPrice / settlePayment live in server/payments.js.
 
@@ -169,18 +173,23 @@ function noteFailures(ip, n) {
 function admitUsage(req, res, next, ip, authInfo) {
   req.authInfo = authInfo;
   const fileCount = authInfo.fileCount || 0;
-  const freeKey = authInfo.type === "paid" ? null : (authInfo.pubkey || `ip:${ip}`);
+  // 무료로 잡아 둔 건수: 무료·익명은 전부, 유료는 묶음 앞쪽의 무료분(freePart)만.
+  const freePart = authInfo.type === "paid" ? (authInfo.freePart || 0) : fileCount;
+  const freeKey = freePart > 0 ? (authInfo.pubkey || `ip:${ip}`) : null;
   inflightFiles += fileCount;
-  if (freeKey) pendingFree.set(freeKey, (pendingFree.get(freeKey) || 0) + fileCount);
+  if (freeKey) pendingFree.set(freeKey, (pendingFree.get(freeKey) || 0) + freePart);
   trackUsage(req, res, (success) => {
     inflightFiles -= fileCount;
     if (freeKey) {
-      const left = (pendingFree.get(freeKey) || 0) - fileCount;
+      const left = (pendingFree.get(freeKey) || 0) - freePart;
       if (left > 0) pendingFree.set(freeKey, left); else pendingFree.delete(freeKey);
     }
     noteFailures(ip, fileCount - success);
     if (authInfo.type === "paid") {
-      settlePaidUsageImpl(db, stmts, authInfo.pubkey, ip, authInfo.reserved, success, authInfo.reservationId);
+      // 성공분은 무료분부터 채운다 — 실패한 파일이 있어도 무료분을 먼저 쓴 것으로 치고 나머지만 과금한다.
+      const freeUsed = Math.min(success, freePart);
+      if (freeUsed > 0) recordUsageImpl(db, stmts, authInfo.pubkey, ip, freeUsed);
+      settlePaidUsageImpl(db, stmts, authInfo.pubkey, ip, authInfo.reserved, success - freeUsed, authInfo.reservationId);
     } else {
       recordUsageImpl(db, stmts, authInfo.pubkey, ip, success);
     }
@@ -208,42 +217,50 @@ async function checkUsage(req, res, next) {
     // 무료 체험(로그인)을 크레딧보다 먼저 쓴다 — 크레딧을 먼저 사면 유료 사용이 usage 를 채워 무료 3건이 사라졌다.
     // 카운트 기반이고 돈이 안 걸려 예약 없이 둔다.
     const { cnt } = stmts.countByPubkey.get(pubkey);
-    if (cnt + (pendingFree.get(pubkey) || 0) + fileCount <= FREE_LIMIT) {
-      return admitUsage(req, res, next, ip, { pubkey, type: "free", remaining: FREE_LIMIT - cnt - fileCount, fileCount });
+    const freeLeft = Math.max(0, FREE_LIMIT - cnt - (pendingFree.get(pubkey) || 0));
+    if (fileCount <= freeLeft) {
+      return admitUsage(req, res, next, ip, { pubkey, type: "free", remaining: freeLeft - fileCount, fileCount });
     }
 
-    // 유료: 원자적으로 예약(amount >= fileCount 일 때만 한 번에 차감). 동시
+    // 유료: 원자적으로 예약(amount >= n 일 때만 한 번에 차감). 동시
     // 요청이 모두 checkUsage 를 지나쳐 1크레딧으로 N회 추출하던 TOCTOU 를 닫는다
     // (2026-08-31 감사). 크레딧은 만료되지 않으므로 잔액 리셋은 하지 않는다.
     // 추출 실패분은 응답 정산에서 환급된다.
-    const reservationId = fileCount > 0 ? reserveImpl(db, stmts, pubkey, fileCount) : 0;
+    // 무료분이 남은 묶음은 남은 무료분을 먼저 쓰고 나머지만 예약한다 — 통째로 유료 처리하면 무료분이 그대로 사라졌다.
+    const paidPart = fileCount - freeLeft;
+    const reservationId = fileCount > 0 ? reserveImpl(db, stmts, pubkey, paidPart) : 0;
     if (reservationId) {
-      return admitUsage(req, res, next, ip, { pubkey, type: "paid", reserved: fileCount, reservationId, fileCount });
+      return admitUsage(req, res, next, ip, { pubkey, type: "paid", reserved: paidPart, freePart: freeLeft, reservationId, fileCount });
     }
 
-    // 크레딧이 있는데도 여기 왔다면 요청한 파일 수보다 잔액이 적은 것이다 — «소진» 이 아니라 그렇게 알린다.
+    // 여기 왔다면 (남은 무료분 + 크레딧)이 요청한 파일 수보다 적다 — 아무것도 없을 때만 «소진» 이라고 한다.
     const balance = stmts.getCredits.get(pubkey);
     const credits = balance && balance.plan !== "free" ? balance.amount : 0;
+    const have = [freeLeft > 0 ? `${freeLeft} free extraction(s)` : "", credits > 0 ? `${credits} credit(s)` : ""].filter(Boolean).join(" and ");
     return res.status(402).json({
       error: "Usage limit reached",
-      message: credits > 0
-        ? `You have ${credits} credit(s) but uploaded ${fileCount} file(s). Upload fewer files or purchase more credits.`
+      message: have
+        ? `You have ${have} left but uploaded ${fileCount} file(s). Upload fewer files or purchase ${credits > 0 ? "more " : ""}credits.`
         : "Free trial exhausted. Purchase credits to continue.",
       credits,
+      freeRemaining: freeLeft,
       needsPayment: true,
       plans: PLANS,
     });
   }
 
   // Anonymous: check by IP
-  const { cnt } = stmts.countByIp.get(ip, ipTag(IP_SECRET, ip));
-  if (cnt + (pendingFree.get(`ip:${ip}`) || 0) + fileCount <= FREE_LIMIT) {
-    return admitUsage(req, res, next, ip, { pubkey: null, ip, type: "anonymous", remaining: FREE_LIMIT - cnt - fileCount, fileCount });
+  const cnt = countAnonByIp(stmts, IP_SECRETS, ip);
+  const anonLeft = Math.max(0, FREE_LIMIT - cnt - (pendingFree.get(`ip:${ip}`) || 0));
+  if (fileCount <= anonLeft) {
+    return admitUsage(req, res, next, ip, { pubkey: null, ip, type: "anonymous", remaining: anonLeft - fileCount, fileCount });
   }
 
   return res.status(402).json({
     error: "Usage limit reached",
-    message: "Free trial exhausted. Login and purchase credits to continue.",
+    message: anonLeft > 0
+      ? `You have ${anonLeft} free extraction(s) left but uploaded ${fileCount} file(s). Upload fewer files, or login and purchase credits.`
+      : "Free trial exhausted. Login and purchase credits to continue.",
     needsPayment: true,
     needsLogin: true,
     plans: PLANS,
@@ -260,7 +277,7 @@ async function anonQuotaGate(req, res, next) {
     return res.status(401).json({ error: "Session expired", message: "Your session expired. Please login again.", needsLogin: true });
   }
   const gateIp = getClientIp(req);
-  const { cnt } = stmts.countByIp.get(gateIp, ipTag(IP_SECRET, gateIp));
+  const cnt = countAnonByIp(stmts, IP_SECRETS, gateIp);
   if (cnt < FREE_LIMIT) return next();
   return res.status(402).json({
     error: "Usage limit reached",
@@ -586,7 +603,7 @@ Rules:
         productName: String(ghsData.productName ?? ""),
         supplier: String(ghsData.supplier ?? ""),
         // 신호어는 라벨 언어의 두 단어뿐이다. 다른 언어로 왔으면(«Danger» 를 한국어 라벨에) 뜻으로 옮긴다.
-        signalWord: Object.values(LANG_MAP).some(l => l.danger.toLowerCase() === String(ghsData.signalWord).trim().toLowerCase())
+        signalWord: isDangerWord(ghsData.signalWord, Object.values(LANG_MAP).map(l => l.danger))
           ? signalWordDanger : signalWordWarning,
         pictograms,
         hazardStatements: Array.isArray(ghsData.hazardStatements) ? ghsData.hazardStatements.map(String) : [],

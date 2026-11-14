@@ -4,4 +4,5 @@ dist/
 server/ghs.db
 server/ghs.db-shm
 server/ghs.db-wal
+server/.ghs-ip-secret
 .omc/

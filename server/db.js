@@ -52,7 +52,8 @@ export function createDb(dbPath) {
   const stmts = {
     countByPubkey: db.prepare("SELECT COUNT(*) as cnt FROM usage WHERE pubkey = ?"),
     // 익명 한도는 원본 IP 와 그 가명(ipTag) 둘 다로 센다 — 90일 지난 행은 가명만 남는다.
-    countByIp: db.prepare("SELECT COUNT(*) as cnt FROM usage WHERE ip IN (?, ?) AND pubkey IS NULL"),
+    // 자리는 셋: 원본 IP, 지금 비밀값의 가명, 옛 비밀값의 가명(countAnonByIp 가 채운다).
+    countByIp: db.prepare("SELECT COUNT(*) as cnt FROM usage WHERE ip IN (?, ?, ?) AND pubkey IS NULL"),
     oldAnonIps: db.prepare("SELECT DISTINCT ip FROM usage WHERE pubkey IS NULL AND ip IS NOT NULL AND ip NOT LIKE 'h:%' AND created_at < unixepoch() - 86400 * 90"),
     tagOldAnonIp: db.prepare("UPDATE usage SET ip = ? WHERE pubkey IS NULL AND ip = ? AND created_at < unixepoch() - 86400 * 90"),
     recordUsage: db.prepare("INSERT INTO usage (pubkey, ip) VALUES (?, ?)"),
@@ -106,6 +107,34 @@ export function createDb(dbPath) {
 export function ipTag(secret, ip) {
   if (!secret || !ip) return ip;
   return "h:" + createHmac("sha256", secret).update(String(ip)).digest("hex").slice(0, 32);
+}
+
+// 익명 IP 한 곳의 평생 사용 건수. secrets = [지금 비밀값, 옛 비밀값…] — 비밀값을 바꾼 뒤에도 옛 가명 행을 같이 센다.
+export function countAnonByIp(stmts, secrets, ip) {
+  const [now, old] = Array.isArray(secrets) ? secrets : [secrets];
+  return stmts.countByIp.get(ip, ipTag(now, ip), ipTag(old || now, ip)).cnt;
+}
+
+// 가명에 쓸 비밀값을 정한다: env 가 있으면 그것, 없으면 DB 옆 파일(없으면 한 번 만들어 0600 으로 둔다).
+// 결제 비밀번호 같은 다른 비밀값에서 파생하면 그 값을 바꾸는 날 옛 가명이 안 맞아 무료 한도가 다시 열린다.
+// 메모리 DB·쓰기 불가 등으로 파일을 못 쓰면 "" (가명화하지 않음).
+export function loadIpSecret(dbPath, envValue, { fs, path, randomBytes }) {
+  if (envValue) return envValue;
+  if (!dbPath || dbPath === ":memory:") return "";
+  const file = path.join(path.dirname(dbPath), ".ghs-ip-secret");
+  try {
+    const have = fs.readFileSync(file, "utf8").trim();
+    if (have) return have;
+  } catch (e) {
+    if (e.code !== "ENOENT") return "";
+  }
+  try {
+    const made = randomBytes(32).toString("hex");
+    fs.writeFileSync(file, made + "\n", { mode: 0o600, flag: "wx" });
+    return made;
+  } catch {
+    try { return fs.readFileSync(file, "utf8").trim(); } catch { return ""; }
+  }
 }
 
 // 90일 지난 익명 행의 원본 IP 를 가명으로 바꾼다. 평생 무료 한도는 countByIp 가 둘 다 세므로 그대로다.
