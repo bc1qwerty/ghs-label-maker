@@ -16,21 +16,24 @@
     if (timer) return;
     try { if (sessionStorage.getItem(KEY)) return; sessionStorage.setItem(KEY, '1'); } catch { return; }
     // 한 번에 여러 파일이 깨지므로 잠깐 모았다가 한꺼번에.
-    timer = setTimeout(function () {
+    timer = setTimeout(async function () {
       var urls = bad.concat(
         [].map.call(document.querySelectorAll('script[src],link[rel=stylesheet],link[rel=modulepreload]'), function (el) { return el.src || el.href; }),
         performance.getEntriesByType('resource').map(function (e) { return e.name; })
       ).filter(function (u, i, a) { return same(u) && ASSET.test(u) && a.indexOf(u) === i; });
-      var purge = window.caches
-        ? caches.keys().then(function (ks) {
-          return Promise.all(ks.map(function (k) {
-            return caches.open(k).then(function (c) { return Promise.all(urls.map(function (u) { return c.delete(u, { ignoreSearch: false }); })); });
+      try {
+        if (window.caches) {
+          var ks = await caches.keys();
+          await Promise.all(ks.map(async function (k) {
+            var c = await caches.open(k);
+            return Promise.all(urls.map(function (u) { return c.delete(u, { ignoreSearch: false }); }));
           }));
-        }).catch(function () { return null; })
-        : Promise.resolve();
-      purge
-        .then(function () { return Promise.all(urls.map(function (u) { return fetch(u, { cache: 'reload', credentials: 'same-origin' }).catch(function () { return null; }); })); })
-        .then(function () { location.reload(); });
+        }
+      } catch { /* 캐시를 못 열어도 다시 받고 새로 연다 */ }
+      await Promise.all(urls.map(async function (u) {
+        try { await fetch(u, { cache: 'reload', credentials: 'same-origin' }); } catch { /* 못 받은 파일은 새로 열 때 다시 받는다 */ }
+      }));
+      location.reload();
     }, 300);
   }
 
