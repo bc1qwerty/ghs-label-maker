@@ -479,7 +479,7 @@ export default function Home() {
                 <div className="space-y-2">
                   <p className="font-semibold text-sm">Pricing</p>
                   <div className="rounded-lg border bg-card p-3 space-y-1.5 text-xs">
-                    <div className="flex justify-between"><span className="text-muted-foreground">Free trial</span><span className="font-semibold text-emerald-700">3 extractions</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Free trial</span><span className="font-semibold text-emerald-700 dark:text-emerald-400">3 extractions</span></div>
                     <div className="border-t my-1"></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">Per use</span><span className="font-medium">100 sats</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">50 extractions</span><span className="font-medium">3,000 sats</span></div>
@@ -703,7 +703,7 @@ export default function Home() {
             {userPubkey && userInfo && (
               <div className="hidden lg:flex xl:hidden items-center justify-between rounded-lg border bg-card p-3 text-xs">
                 <div className="flex items-center gap-4">
-                  <span className="text-emerald-700 font-semibold">⚡ {userPubkey.slice(0, 8)}...</span>
+                  <span className="text-emerald-700 dark:text-emerald-400 font-semibold">⚡ {userPubkey.slice(0, 8)}...</span>
                   <span><strong>{userInfo.credits || userInfo.freeRemaining}</strong> {userInfo.credits > 0 ? "credits" : "free left"}</span>
                   <span><strong>{userInfo.totalUsed}</strong> used</span>
                 </div>
@@ -722,7 +722,7 @@ export default function Home() {
                 {userPubkey && userInfo ? (
                   <div className="rounded-lg border bg-card p-3 space-y-2.5 text-xs">
                     <div className="flex items-center justify-between">
-                      <p className="text-emerald-700 font-semibold">Account</p>
+                      <p className="text-emerald-700 dark:text-emerald-400 font-semibold">Account</p>
                       <p className="text-muted-foreground font-mono">{userPubkey.slice(0, 8)}...{userPubkey.slice(-4)}</p>
                     </div>
                     <div className="border-t"></div>
@@ -751,7 +751,7 @@ export default function Home() {
                   </div>
                 ) : userPubkey ? (
                   <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs">
-                    <p className="text-emerald-700 font-medium">Logged in</p>
+                    <p className="text-emerald-700 dark:text-emerald-400 font-medium">Logged in</p>
                     <p className="text-muted-foreground font-mono mt-0.5">{userPubkey.slice(0, 10)}...</p>
                   </div>
                 ) : (
@@ -791,7 +791,7 @@ export default function Home() {
                   {"Generated Labels"}
                 </h2>
                 <div className="flex gap-3 text-sm">
-                  <span className="flex items-center gap-1 text-emerald-700 font-medium">
+                  <span className="flex items-center gap-1 text-emerald-700 dark:text-emerald-400 font-medium">
                     <CheckCircle className="h-4 w-4" />
                     {`${successCount} succeeded`}
                   </span>
@@ -851,7 +851,7 @@ export default function Home() {
                   data-testid={`result-status-${idx}`}
                 >
                   {result.status === "success" ? (
-                    <CheckCircle className="h-4 w-4 text-emerald-700 flex-shrink-0" />
+                    <CheckCircle className="h-4 w-4 text-emerald-700 dark:text-emerald-400 flex-shrink-0" />
                   ) : (
                     <XCircle className="h-4 w-4 text-destructive flex-shrink-0" />
                   )}
