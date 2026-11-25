@@ -30,9 +30,16 @@
           }));
         }
       } catch { /* 캐시를 못 열어도 다시 받고 새로 연다 */ }
-      await Promise.all(urls.map(async function (u) {
-        try { await fetch(u, { cache: 'reload', credentials: 'same-origin' }); } catch { /* 못 받은 파일은 새로 열 때 다시 받는다 */ }
+      var answered = await Promise.all(urls.map(async function (u) {
+        try { await fetch(u, { cache: 'reload', credentials: 'same-origin' }); return true; } catch { return false; }
       }));
+      // 깨진 파일이 다시 받아도 답이 없으면 네트워크가 끊긴 것이다 — 새로 열면 앱 대신 «인터넷 없음» 화면만 남는다
+      // (서비스 워커가 없을 때). 그대로 두고, 나중에 진짜 고장이면 다시 고칠 수 있게 표시도 지운다.
+      if (bad.length && !bad.some(function (u) { return answered[urls.indexOf(u)]; })) {
+        timer = 0; bad = [];
+        try { sessionStorage.removeItem(KEY); } catch { /* 없으면 그만 */ }
+        return;
+      }
       location.reload();
     }, 300);
   }
@@ -54,9 +61,11 @@
     });
   });
 
-  addEventListener('vite:preloadError', function () { heal(''); });
+  // 메시지에 실패한 모듈 주소가 실려 오면 그 주소로 — 위의 «네트워크 끊김» 판정에 쓴다.
+  var urlIn = function (m) { var u = (String(m).match(/https?:\/\/[^\s'"]+/) || [''])[0]; return same(u) ? u : ''; };
+  addEventListener('vite:preloadError', function (e) { heal(urlIn(e.payload && e.payload.message)); });
   addEventListener('unhandledrejection', function (e) {
     var m = String((e.reason && e.reason.message) || e.reason || '');
-    if (/dynamically imported module|Importing a module script failed|ChunkLoadError|Loading (CSS )?chunk .* failed|Unable to preload CSS/.test(m)) heal('');
+    if (/dynamically imported module|Importing a module script failed|ChunkLoadError|Loading (CSS )?chunk .* failed|Unable to preload CSS/.test(m)) heal(urlIn(m));
   });
 })();
