@@ -202,7 +202,7 @@ export function PaymentModal({ pubkey, fileCount, onClose, onPaid }: PaymentModa
                       <p className="text-xs text-muted-foreground">
                         {batchPrice.perFile} sats/file
                         {batchPrice.discount > 0 && (
-                          <span className="ml-1 text-emerald-600 font-semibold">({batchPrice.discount}% off)</span>
+                          <span className="ml-1 text-emerald-700 font-semibold">({batchPrice.discount}% off)</span>
                         )}
                       </p>
                     </div>

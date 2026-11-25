@@ -86,7 +86,7 @@
   --secondary: 214 15% 91%;
   --secondary-foreground: 220 15% 10%;
   --muted: 210 20% 96%;
-  --muted-foreground: 215 16% 47%;
+  --muted-foreground: 215 16% 42%; /* 47%(#65758b) 는 옅은 바탕에서 4.29~4.49:1 — 2026-11-25 axe */
   --accent: 210 20% 96%;
   --accent-foreground: 220 15% 10%;
   --destructive: 0 84% 45%;

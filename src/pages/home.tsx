@@ -448,11 +448,11 @@ export default function Home() {
             <div className="xl:grid xl:grid-cols-[300px_1fr_260px] lg:grid lg:grid-cols-[280px_1fr] lg:gap-6">
 
               {/* Left: Info Panel */}
-              <aside className="space-y-5 mb-8 lg:mb-0 lg:sticky lg:top-8 lg:self-start print:hidden">
+              <aside aria-label="How it works" className="space-y-5 mb-8 lg:mb-0 lg:sticky lg:top-8 lg:self-start print:hidden">
 
                 {/* Notice */}
                 <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs text-muted-foreground leading-relaxed">
-                  <p className="font-semibold text-emerald-600 dark:text-emerald-400 mb-1">Free Trial</p>
+                  <p className="font-semibold text-emerald-700 dark:text-emerald-400 mb-1">Free Trial</p>
                   <p>Your first 3 extractions are free — sign in with a Lightning wallet, no payment needed. After that, pay per use with Bitcoin Lightning. No subscriptions, no hidden fees.</p>
                 </div>
 
@@ -479,7 +479,7 @@ export default function Home() {
                 <div className="space-y-2">
                   <p className="font-semibold text-sm">Pricing</p>
                   <div className="rounded-lg border bg-card p-3 space-y-1.5 text-xs">
-                    <div className="flex justify-between"><span className="text-muted-foreground">Free trial</span><span className="font-semibold text-emerald-600">3 extractions</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Free trial</span><span className="font-semibold text-emerald-700">3 extractions</span></div>
                     <div className="border-t my-1"></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">Per use</span><span className="font-medium">100 sats</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">50 extractions</span><span className="font-medium">3,000 sats</span></div>
@@ -703,7 +703,7 @@ export default function Home() {
             {userPubkey && userInfo && (
               <div className="hidden lg:flex xl:hidden items-center justify-between rounded-lg border bg-card p-3 text-xs">
                 <div className="flex items-center gap-4">
-                  <span className="text-emerald-600 font-semibold">⚡ {userPubkey.slice(0, 8)}...</span>
+                  <span className="text-emerald-700 font-semibold">⚡ {userPubkey.slice(0, 8)}...</span>
                   <span><strong>{userInfo.credits || userInfo.freeRemaining}</strong> {userInfo.credits > 0 ? "credits" : "free left"}</span>
                   <span><strong>{userInfo.totalUsed}</strong> used</span>
                 </div>
@@ -718,11 +718,11 @@ export default function Home() {
               </div>{/* end center column */}
 
               {/* Right column: Account & History (xl only, lg shows inline) */}
-              <aside className="hidden xl:block space-y-4 lg:sticky lg:top-8 lg:self-start print:hidden">
+              <aside aria-label="Account and history" className="hidden xl:block space-y-4 lg:sticky lg:top-8 lg:self-start print:hidden">
                 {userPubkey && userInfo ? (
                   <div className="rounded-lg border bg-card p-3 space-y-2.5 text-xs">
                     <div className="flex items-center justify-between">
-                      <p className="text-emerald-600 font-semibold">Account</p>
+                      <p className="text-emerald-700 font-semibold">Account</p>
                       <p className="text-muted-foreground font-mono">{userPubkey.slice(0, 8)}...{userPubkey.slice(-4)}</p>
                     </div>
                     <div className="border-t"></div>
@@ -751,7 +751,7 @@ export default function Home() {
                   </div>
                 ) : userPubkey ? (
                   <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs">
-                    <p className="text-emerald-600 font-medium">Logged in</p>
+                    <p className="text-emerald-700 font-medium">Logged in</p>
                     <p className="text-muted-foreground font-mono mt-0.5">{userPubkey.slice(0, 10)}...</p>
                   </div>
                 ) : (
@@ -791,7 +791,7 @@ export default function Home() {
                   {"Generated Labels"}
                 </h2>
                 <div className="flex gap-3 text-sm">
-                  <span className="flex items-center gap-1 text-emerald-600 font-medium">
+                  <span className="flex items-center gap-1 text-emerald-700 font-medium">
                     <CheckCircle className="h-4 w-4" />
                     {`${successCount} succeeded`}
                   </span>
@@ -851,7 +851,7 @@ export default function Home() {
                   data-testid={`result-status-${idx}`}
                 >
                   {result.status === "success" ? (
-                    <CheckCircle className="h-4 w-4 text-emerald-600 flex-shrink-0" />
+                    <CheckCircle className="h-4 w-4 text-emerald-700 flex-shrink-0" />
                   ) : (
                     <XCircle className="h-4 w-4 text-destructive flex-shrink-0" />
                   )}
